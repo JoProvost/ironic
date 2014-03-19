@@ -663,6 +663,31 @@
 # value)
 #allowed_direct_url_schemes=
 
+# The secret token given to Swift to allow temporary URL
+# downloads. (string value)
+#swift_temp_url_key=<None>
+
+# The length of time in seconds that the temporary URL will be
+# valid for. (integer value)
+#swift_temp_url_duration=300
+
+# Override the "endpoint" for the Swift URLs of the form
+# "endpoint_url/path/container/object_id". Do not include
+# trailing "/" or API version.For example, use
+# "https://swift.example.com". (string value)
+#swift_endpoint_url=<None>
+
+# Override the "path" for the Swift URLs of the form
+# "endpoint_url/path/container/object_id". "path" includes the
+# API version and the tenant_id It should not include leading
+# or trailing slashes. For  example,
+# "v1/TENANT_NAME_TENANT_ID". (string value)
+#swift_path=<None>
+
+# Override the name of the Swift container in which Glance
+# stores its images. (string value)
+#swift_backend_container=<None>
+
 
 #
 # Options defined in ironic.common.image_service
