@@ -37,7 +37,7 @@ def create(node):
     :returns: GenericDriverFields or a subclass thereof, as appropriate
               for the supplied node.
     """
-    if 'pxe' in node.driver:
+    if 'pxe' in node.driver or 'agent' in node.driver:
         return PXEDriverFields(node)
     else:
         return GenericDriverFields(node)
@@ -95,6 +95,10 @@ class PXEDriverFields(GenericDriverFields):
                       'value': str(instance['root_gb'])})
         patch.append({'path': '/instance_info/swap_mb', 'op': 'add',
                       'value': str(flavor['swap'])})
+
+        if 'configdrive' in instance:
+            patch.append({'path': '/instance_info/configdrive', 'op': 'add',
+                          'value': instance['configdrive']})
 
         if instance.get('ephemeral_gb'):
             patch.append({'path': '/instance_info/ephemeral_gb',

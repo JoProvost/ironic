@@ -879,3 +879,35 @@ class IronicDriverTestCase(test.NoDBTestCase):
 
         # assert port.update() was not called
         self.assertFalse(mock_update.called)
+
+    @mock.patch('base64.b64encode')
+    @mock.patch('nova.api.metadata.base.InstanceMetadata')
+    @mock.patch('nova.virt.configdrive.ConfigDriveBuilder')
+    def test_generate_configdrive(self, config_mock, instance_mock, b64_mock):
+        node_uuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+        node = ironic_utils.get_test_node(uuid=node_uuid)
+
+        make_drive_mock = mock.MagicMock()
+        config_mock.__enter__.return_value = make_drive_mock
+
+        instance_mock.return_value = 'instance_mock'
+        b64_mock.return_value = 'b64encoded'
+
+        instance = fake_instance.fake_instance_obj(self.ctx, node=node_uuid)
+        network_info = utils.get_test_network_info()
+        admin_password = 'hunter2'
+
+        expected_md = {'admin_pass': admin_password}
+
+        encoded = self.driver.generate_configdrive(
+            instance=instance, node=node, network_info=network_info,
+            admin_password=admin_password)
+
+        instance_mock.assert_called_once_with(instance,
+                                              content=None,
+                                              extra_md=expected_md,
+                                              network_info=network_info)
+
+        config_mock.assert_called_once_with(instance_md='instance_mock')
+
+        self.assertEqual('b64encoded', encoded)
