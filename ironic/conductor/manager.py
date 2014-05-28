@@ -191,7 +191,6 @@ class ConductorManager(periodic_task.PeriodicTasks):
 
         :param context: an admin context
         :param node_obj: a changed (but not saved) node object.
-
         """
         node_id = node_obj.uuid
         LOG.debug("RPC update_node called for node %s." % node_id)
@@ -209,14 +208,7 @@ class ConductorManager(periodic_task.PeriodicTasks):
             #             instance_uuid needs to be unset, and handle it.
             if 'instance_uuid' in delta:
                 task.driver.power.validate(task)
-                node_obj['power_state'] = \
-                        task.driver.power.get_power_state(task)
-
-                if node_obj['power_state'] != states.POWER_OFF:
-                    raise exception.NodeInWrongPowerState(
-                            node=node_id,
-                            pstate=node_obj['power_state'])
-
+                task.driver.deploy.validate_power_state(task, 'deploy')
             # update any remaining parameters, then save
             node_obj.save(context)
 
@@ -793,7 +785,8 @@ class ConductorManager(periodic_task.PeriodicTasks):
         :raises: NodeLocked if node is locked by another conductor.
         :raises: NodeAssociated if the node contains an instance
             associated with it.
-        :raises: NodeInWrongPowerState if the node is not powered off.
+        :raises: NodeInWrongPowerState if the node is not in a supported
+            power state.
 
         """
         with task_manager.acquire(context, node_id) as task:
@@ -801,10 +794,8 @@ class ConductorManager(periodic_task.PeriodicTasks):
             if node.instance_uuid is not None:
                 raise exception.NodeAssociated(node=node.uuid,
                                                instance=node.instance_uuid)
-            if node.power_state not in [states.POWER_OFF, states.NOSTATE]:
-                msg = (_("Node %s can't be deleted because it's not "
-                         "powered off") % node.uuid)
-                raise exception.NodeInWrongPowerState(msg)
+            task.driver.deploy.validate_power_state(task, 'destroy')
+
             # FIXME(comstud): Remove context argument after we ensure
             # every instantiation of Node includes the context
             node.destroy(context)

@@ -294,8 +294,12 @@ class ManagerTestCase(tests_db_base.DbTestCase):
             self.assertIsNone(node.last_error)
 
     def test_update_node(self):
+        self.driver.deploy.valid_states = {
+            'deploy': [states.POWER_OFF]
+        }
         node = obj_utils.create_test_node(self.context, driver='fake',
-                                          extra={'test': 'one'})
+                                          extra={'test': 'one'},
+                                          power_state=states.POWER_OFF)
 
         # check that ManagerService.update_node actually updates the node
         node.extra = {'test': 'two'}
@@ -303,6 +307,9 @@ class ManagerTestCase(tests_db_base.DbTestCase):
         self.assertEqual({'test': 'two'}, res['extra'])
 
     def test_update_node_already_locked(self):
+        self.driver.deploy.valid_states = {
+            'deploy': [states.POWER_OFF]
+        }
         node = obj_utils.create_test_node(self.context, driver='fake',
                                           extra={'test': 'one'})
 
@@ -321,10 +328,13 @@ class ManagerTestCase(tests_db_base.DbTestCase):
         self.assertEqual({'test': 'one'}, res['extra'])
 
     def test_associate_node_invalid_state(self):
+        self.driver.deploy.valid_states = {
+            'deploy': [states.POWER_OFF]
+        }
         node = obj_utils.create_test_node(self.context, driver='fake',
                                           extra={'test': 'one'},
-                                 instance_uuid=None,
-                                 power_state=states.POWER_ON)
+                                          instance_uuid=None,
+                                          power_state=states.POWER_ON)
 
         # check that it fails because state is POWER_ON
         node.instance_uuid = 'fake-uuid'
@@ -338,6 +348,31 @@ class ManagerTestCase(tests_db_base.DbTestCase):
         # verify change did not happen
         node.refresh()
         self.assertIsNone(node.instance_uuid)
+
+    def test_update_validate_power_state(self):
+        self.driver.deploy.valid_states = {
+            'deploy': [states.POWER_OFF]
+        }
+        ndict = utils.get_test_node(driver='fake',
+                                    power_state=states.POWER_OFF)
+        node = self.dbapi.create_node(ndict)
+        with task_manager.acquire(self.context,
+                                  node.uuid) as task:
+            self.driver.deploy.validate_power_state(task, 'deploy')
+
+    def test_update_validate_power_state_invalid(self):
+        self.driver.deploy.valid_states = {
+            'deploy': [states.POWER_OFF]
+        }
+        ndict = utils.get_test_node(driver='fake',
+                                    power_state=states.POWER_ON)
+        node = self.dbapi.create_node(ndict)
+        with task_manager.acquire(self.context,
+                                  node.uuid) as task:
+            self.assertRaises(exception.NodeInWrongPowerState,
+                              self.driver.deploy.validate_power_state,
+                              task,
+                              'deploy')
 
     def test_associate_node_valid_state(self):
         node = obj_utils.create_test_node(self.context, driver='fake',
@@ -632,7 +667,8 @@ class ManagerTestCase(tests_db_base.DbTestCase):
             mock_spawn.assert_called_once_with(mock.ANY, mock.ANY, mock.ANY)
 
     def test_do_node_deploy_worker_pool_full(self):
-        node = obj_utils.create_test_node(self.context, driver='fake')
+        node = obj_utils.create_test_node(self.context,
+                                          driver='fake')
         self._start_service()
 
         with mock.patch.object(self.service, '_spawn_worker') as mock_spawn:
@@ -846,6 +882,32 @@ class ManagerTestCase(tests_db_base.DbTestCase):
         # Verify reservation was released.
         node.refresh()
         self.assertIsNone(node.reservation)
+
+    def test_destroy_validate_power_state(self):
+        self.driver.deploy.valid_states = {
+            'destroy': [states.POWER_OFF]
+        }
+        ndict = utils.get_test_node(driver='fake',
+                                    power_state=states.POWER_OFF)
+        node = self.dbapi.create_node(ndict)
+        with task_manager.acquire(self.context,
+                                  node.uuid) as task:
+            self.driver.deploy.validate_power_state(task, 'destroy')
+
+    def test_destroy_validate_power_state_invalid(self):
+        self.driver.deploy.valid_states = {
+            'destroy': [states.POWER_OFF]
+        }
+        # check that it fails because state is POWER_ON
+        ndict = utils.get_test_node(driver='fake',
+                                    power_state=states.POWER_ON)
+        node = self.dbapi.create_node(ndict)
+        with task_manager.acquire(self.context,
+                                  node.uuid) as task:
+            self.assertRaises(exception.NodeInWrongPowerState,
+                              self.driver.deploy.validate_power_state,
+                              task,
+                              'destroy')
 
     @mock.patch.object(timeutils, 'utcnow')
     def test__check_deploy_timeouts_timeout(self, mock_utcnow):
