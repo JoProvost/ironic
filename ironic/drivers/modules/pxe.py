@@ -178,8 +178,11 @@ def _build_pxe_config(node, pxe_info, ctx):
             'deployment_iscsi_iqn': "iqn-%s" % node.uuid,
             'deployment_aki_path': pxe_info['deploy_kernel'][1],
             'deployment_ari_path': pxe_info['deploy_ramdisk'][1],
+            'aki_path': pxe_info.get('kernel', [''])[1],
+            'ari_path': pxe_info.get('ramdisk', [''])[1],
             'ironic_api_url': ironic_api,
             'pxe_append_params': CONF.pxe.pxe_append_params,
+            'boot_ami': pxe_info.get('kernel') and pxe_info.get('ramdisk'),
         }
 
     tmpl_path, tmpl_file = os.path.split(CONF.pxe.pxe_config_template)
@@ -373,6 +376,28 @@ def _get_tftp_image_info(node, ctx):
             str(d_info[label]).split('/')[-1],
             os.path.join(CONF.pxe.tftp_root, node.uuid, label)
         )
+
+    driver_info = node.driver_info
+    labels = ('kernel', 'ramdisk')
+    if not (driver_info.get('pxe_kernel') and driver_info.get('pxe_ramdisk')):
+        glance_service = service.Service(version=1, context=ctx)
+        iproperties = glance_service.show(d_info['image_source'])['properties']
+        for label in labels:
+            if label + '_id' not in iproperties:
+                continue
+            driver_info['pxe_' + label] = str(iproperties[label +
+                                                          '_id']).split('/')[-1]
+        node.driver_info = driver_info
+        node.save(ctx)
+
+    for label in labels:
+        if 'pxe_' + label not in driver_info:
+            continue
+        image_info[label] = (
+            driver_info['pxe_' + label],
+            os.path.join(CONF.pxe.tftp_root, node.uuid, label)
+        )
+
     return image_info
 
 
@@ -453,6 +478,7 @@ def _update_neutron(task):
                           "following ports: %(ports)s."),
                           {'node': task.node.uuid, 'ports': failures})
 
+
 def _remove_dhcp_opts(task):
     """Send or update the DHCP BOOT options to Neutron for this node."""
     options = [{'opt_name': 'bootfile-name',
@@ -493,7 +519,6 @@ def _remove_dhcp_opts(task):
                           {'node': task.node.uuid, 'ports': failures})
 
 
-
 def _create_pxe_config(task, pxe_info):
     """Generate pxe configuration file and link mac ports to it for
     tftp booting.
@@ -528,13 +553,16 @@ def _check_image_size(task):
 def _validate_glance_image(ctx, driver_info):
     """Validate the image in Glance.
 
-    Check if the image exist in Glance
+    Check if the image exist in Glance and return its
+    'kernel_id' and 'ramdisk_id' properties.
 
     :raises: InvalidParameterValue.
+    :returns: the image properties
     """
     image_id = driver_info['image_source']
     try:
         glance_service = service.Service(version=1, context=ctx)
+        image_props = glance_service.show(image_id)['properties']
     except (exception.GlanceConnectionFailed,
             exception.ImageNotAuthorized,
             exception.Invalid):
@@ -544,6 +572,22 @@ def _validate_glance_image(ctx, driver_info):
     except exception.ImageNotFound:
         raise exception.InvalidParameterValue(_(
             "Image %s not found in Glance") % image_id)
+
+    return image_props
+
+
+def _is_ami_glance_image(task, node):
+    """Check if the image in Glance is AMI.
+
+    :raises: InvalidParameterValue.
+    :returns: True if it is AMI
+    """
+    d_info = _parse_driver_info(node)
+    image_props = _validate_glance_image(task.context, d_info)
+    for prop in ('kernel_id', 'ramdisk_id'):
+        if not image_props.get(prop):
+            return False
+    return True
 
 
 class PXEDeploy(base.DeployInterface):
@@ -758,8 +802,13 @@ class VendorPassthru(base.VendorInterface):
         LOG.info(_('Continuing deployment for node %(node)s, params '
                    '%(params)s') % {'node': node.uuid, 'params': params})
 
+        is_ami = _is_ami_glance_image(task, node)
+
         try:
-            deploy_utils.deploy_disk_image(**params)
+            if is_ami:
+                deploy_utils.deploy(**params)
+            else:
+                deploy_utils.deploy_disk_image(**params)
         except Exception as e:
             LOG.error(_('PXE deploy failed for instance %(instance)s. '
                         'Error: %(error)s') % {'instance': node.instance_uuid,
@@ -770,16 +819,18 @@ class VendorPassthru(base.VendorInterface):
             node.provision_state = states.ACTIVE
             node.target_provision_state = states.NOSTATE
             node.save(task.context)
-            #manager_utils.node_set_boot_device(task, 'disk', persistent=True)
-            utils.unlink_without_raise(_get_pxe_config_file_path(
-                node.uuid))
-            for port in driver_utils.get_node_mac_addresses(task):
-                mac_path = _get_pxe_mac_path(port)
-                utils.unlink_without_raise(mac_path)
 
-            utils.rmtree_without_raise(
-                    os.path.join(CONF.pxe.tftp_root, node.uuid))
-            _remove_dhcp_opts(task)
+            if not is_ami:
+                #manager_utils.node_set_boot_device(task, 'disk', persistent=True)
+                utils.unlink_without_raise(_get_pxe_config_file_path(
+                    node.uuid))
+                for port in driver_utils.get_node_mac_addresses(task):
+                    mac_path = _get_pxe_mac_path(port)
+                    utils.unlink_without_raise(mac_path)
+
+                utils.rmtree_without_raise(
+                        os.path.join(CONF.pxe.tftp_root, node.uuid))
+                _remove_dhcp_opts(task)
 
         _destroy_images(driver_info, node.uuid)
 
