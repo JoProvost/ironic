@@ -18,13 +18,22 @@
 #    under the License.
 
 """
-Ironic IPMI power manager.
+IPMI power manager driver.
+
+Uses the 'ipmitool' command (http://ipmitool.sourceforge.net/) to remotely
+manage hardware.  This includes setting the boot device, getting a
+serial-over-LAN console, and controlling the power state of the machine.
+
+NOTE THAT CERTAIN DISTROS MAY INSTALL openipmi BY DEFAULT, INSTEAD OF ipmitool,
+WHICH PROVIDES DIFFERENT COMMAND-LINE OPTIONS AND *IS NOT SUPPORTED* BY THIS
+DRIVER.
 """
 
 import contextlib
 import os
 import stat
 import tempfile
+import time
 
 from oslo.config import cfg
 
@@ -37,13 +46,63 @@ from ironic.drivers.modules import console_utils
 from ironic.openstack.common import excutils
 from ironic.openstack.common import log as logging
 from ironic.openstack.common import loopingcall
+from ironic.openstack.common import processutils
+
 
 CONF = cfg.CONF
+CONF.import_opt('retry_timeout',
+                'ironic.drivers.modules.ipminative',
+                group='ipmi')
+CONF.import_opt('min_command_interval',
+                'ironic.drivers.modules.ipminative',
+                group='ipmi')
 
 LOG = logging.getLogger(__name__)
 
 VALID_BOOT_DEVICES = ['pxe', 'disk', 'safe', 'cdrom', 'bios']
 VALID_PRIV_LEVELS = ['ADMINISTRATOR', 'CALLBACK', 'OPERATOR', 'USER']
+LAST_CMD_TIME = {}
+TIMING_SUPPORT = None
+
+
+def _is_timing_supported(is_supported=None):
+    # shim to allow module variable to be mocked in unit tests
+    global TIMING_SUPPORT
+
+    if (TIMING_SUPPORT is None) and (is_supported is not None):
+        TIMING_SUPPORT = is_supported
+    return TIMING_SUPPORT
+
+
+def check_timing_support():
+    """Check the installed version of ipmitool for -N -R option support.
+
+    Support was added in 1.8.12 for the -N -R options, which enable
+    more precise control over timing of ipmi packets. Prior to this,
+    the default behavior was to retry each command up to 18 times at
+    1 to 5 second intervals.
+    http://ipmitool.cvs.sourceforge.net/viewvc/ipmitool/ipmitool/ChangeLog?revision=1.37  # noqa
+
+    This method updates the module-level TIMING_SUPPORT variable so that
+    it is accessible by any driver interface class in this module. It is
+    intended to be called from the __init__ method of such classes only.
+
+    :returns: boolean indicating whether support for -N -R is present
+    :raises: OSError
+    """
+    if _is_timing_supported() is None:
+        # Directly check ipmitool for support of -N and -R options. Because
+        # of the way ipmitool processes' command line options, if the local
+        # ipmitool does not support setting the timing options, the command
+        # below will fail.
+        try:
+            out, err = utils.execute(*['ipmitool', '-N', '0', '-R', '0', '-h'])
+        except processutils.ProcessExecutionError:
+            # the local ipmitool does not support the -N and -R options.
+            _is_timing_supported(False)
+        else:
+            # looks like ipmitool supports timing options.
+            _is_timing_supported(True)
 
 
 def _console_pwfile_path(uuid):
@@ -140,17 +199,32 @@ def _exec_ipmitool(driver_info, command):
         args.append('-U')
         args.append(driver_info['username'])
 
+    # specify retry timing more precisely, if supported
+    if _is_timing_supported():
+        num_tries = max(
+            (CONF.ipmi.retry_timeout // CONF.ipmi.min_command_interval), 1)
+        args.append('-R')
+        args.append(str(num_tries))
+
+        args.append('-N')
+        args.append(str(CONF.ipmi.min_command_interval))
+
     # 'ipmitool' command will prompt password if there is no '-f' option,
     # we set it to '\0' to write a password file to support empty password
-
     with _make_password_file(driver_info['password'] or '\0') as pw_file:
         args.append('-f')
         args.append(pw_file)
         args.extend(command.split(" "))
-        out, err = utils.execute(*args, attempts=3)
-        LOG.debug("ipmitool stdout: '%(out)s', stderr: '%(err)s', from node "
-                  "%(node_id)s",
-                  {'out': out, 'err': err, 'node_id': driver_info['uuid']})
+        # NOTE(deva): ensure that no communications are sent to a BMC more
+        #             often than once every min_command_interval seconds.
+        time_till_next_poll = CONF.ipmi.min_command_interval - (
+                time.time() - LAST_CMD_TIME.get(driver_info['address'], 0))
+        if time_till_next_poll > 0:
+            time.sleep(time_till_next_poll)
+        try:
+            out, err = utils.execute(*args)
+        finally:
+            LAST_CMD_TIME[driver_info['address']] = time.time()
         return out, err
 
 
@@ -278,24 +352,28 @@ def _power_status(driver_info):
 
 class IPMIPower(base.PowerInterface):
 
-    def validate(self, task, node):
+    def __init__(self):
+        try:
+            check_timing_support()
+        except OSError:
+            # TODO(deva): raise a DriverLoadError if ipmitool
+            #             is not present on the system.
+            pass
+
+    def validate(self, task):
         """Validate driver_info for ipmitool driver.
 
-        Check that node['driver_info'] contains IPMI credentials and BMC is
-        accessible with this credentials.
+        Check that node['driver_info'] contains IPMI credentials.
 
-        :param task: a task from TaskManager.
-        :param node: Single node object.
+        :param task: a TaskManager instance containing the node to act on.
         :raises: InvalidParameterValue if required ipmi parameters are missing.
 
         """
-        driver_info = _parse_driver_info(node)
-        try:
-            _exec_ipmitool(driver_info, "mc guid")
-        except Exception as e:
-            msg = _("BMC inaccessible for node %(node)s: "
-                    "%(error)s") % {'node': node.uuid, 'error': e}
-            raise exception.InvalidParameterValue(msg)
+        _parse_driver_info(task.node)
+        # NOTE(deva): don't actually touch the BMC in validate because it is
+        #             called too often, and BMCs are too fragile.
+        #             This is a temporary measure to mitigate problems while
+        #             1314954 and 1314961 are resolved.
 
     def get_power_state(self, task):
         """Get the current power state of the task's node.
@@ -392,8 +470,7 @@ class VendorPassthru(base.VendorInterface):
             raise exception.InvalidParameterValue(_(
                 "Unsupported method (%s) passed to IPMItool driver.")
                 % method)
-
-        return True
+        _parse_driver_info(task.node)
 
     def vendor_passthru(self, task, **kwargs):
         method = kwargs['method']
@@ -407,13 +484,21 @@ class VendorPassthru(base.VendorInterface):
 class IPMIShellinaboxConsole(base.ConsoleInterface):
     """A ConsoleInterface that uses ipmitool and shellinabox."""
 
-    def validate(self, task, node):
+    def __init__(self):
+        try:
+            check_timing_support()
+        except OSError:
+            # TODO(deva): raise DriverLoadError if ipmitool
+            # is not present on the system.
+            pass
+
+    def validate(self, task):
         """Validate the Node console info.
 
-        :param node: a single Node to validate.
+        :param task: a task from TaskManager.
         :raises: InvalidParameterValue
         """
-        driver_info = _parse_driver_info(node)
+        driver_info = _parse_driver_info(task.node)
         if not driver_info['port']:
             raise exception.InvalidParameterValue(_(
                 "IPMI terminal port not supplied to IPMI driver."))

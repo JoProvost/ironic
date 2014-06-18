@@ -33,6 +33,12 @@ opts = [
     cfg.IntOpt('retry_timeout',
                default=60,
                help='Maximum time in seconds to retry IPMI operations.'),
+    cfg.IntOpt('min_command_interval',
+               default=5,
+               help='Minimum time, in seconds, between IPMI operations '
+                    'sent to a server. There is a risk with some hardware '
+                    'that setting this too low may cause the BMC to crash. '
+                    'Recommended setting is 5 seconds.'),
     ]
 
 CONF = cfg.CONF
@@ -197,11 +203,10 @@ def _power_status(driver_info):
 class NativeIPMIPower(base.PowerInterface):
     """The power driver using native python-ipmi library."""
 
-    def validate(self, task, node):
+    def validate(self, task):
         """Check that node['driver_info'] contains IPMI credentials.
 
-        :param task: a task from TaskManager.
-        :param node: a single node to validate.
+        :param task: a TaskManager instance containing the node to act on.
         :raises: InvalidParameterValue when required ipmi credentials
                  are missing.
         """

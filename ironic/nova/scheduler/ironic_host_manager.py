@@ -22,6 +22,7 @@ subdivided into multiple instances.
 """
 from oslo.config import cfg
 
+from nova.openstack.common import jsonutils
 from nova.openstack.common import log as logging
 from nova.openstack.common import timeutils
 from nova.scheduler import host_manager
@@ -70,6 +71,9 @@ class IronicNodeState(host_manager.HostState):
         self.vcpus_total = compute['vcpus']
         self.vcpus_used = compute['vcpus_used']
 
+        stats = compute.get('stats', '{}')
+        self.stats = jsonutils.loads(stats)
+
         self.updated = compute['updated_at']
 
     def consume_from_instance(self, instance):
@@ -80,18 +84,17 @@ class IronicNodeState(host_manager.HostState):
         self.updated = timeutils.utcnow()
 
 
-def new_host_state(self, host, node, capabilities=None, service=None):
+def new_host_state(self, host, node, **kwargs):
     """Returns an instance of IronicNodeState or HostState according to
-    capabilities. If 'ironic_driver' is in capabilities, it returns an
-    instance of IronicHostState. If not, returns an instance of HostState.
+    compute['cpu_info']. If 'cpu_info' equals 'baremetal cpu', it returns an
+    instance of IronicNodeState. If not, returns an instance of HostState.
     """
-    if capabilities is None:
-        capabilities = {}
-    cap = capabilities.get('compute', {})
-    if bool(cap.get('ironic_driver')):
-        return IronicNodeState(host, node, capabilities, service)
+    compute = kwargs.get('compute')
+
+    if compute and compute.get('cpu_info') == 'baremetal cpu':
+        return IronicNodeState(host, node, **kwargs)
     else:
-        return host_manager.HostState(host, node, capabilities, service)
+        return host_manager.HostState(host, node, **kwargs)
 
 
 class IronicHostManager(host_manager.HostManager):
