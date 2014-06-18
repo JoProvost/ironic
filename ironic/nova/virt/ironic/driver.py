@@ -40,6 +40,12 @@ from nova.openstack.common import log as logging
 from nova.openstack.common import loopingcall
 from nova.virt import driver as virt_driver
 from nova.virt import firewall
+from nova.api.metadata import base as instance_metadata
+from nova.virt import configdrive
+import zlib
+import base64
+import tempfile
+import os
 
 LOG = logging.getLogger(__name__)
 
@@ -226,7 +232,8 @@ class IronicDriver(virt_driver.ComputeDriver):
     def _stop_firewall(self, instance, network_info):
         self.firewall_driver.unfilter_instance(instance, network_info)
 
-    def _add_driver_fields(self, node, instance, image_meta, flavor):
+    def _add_driver_fields(self, node, instance, image_meta, flavor, 
+                                        admin_pass, files, network_info):
         icli = client_wrapper.IronicClientWrapper()
         patch = patcher.create(node).get_deploy_patch(
                 instance, image_meta, flavor)
@@ -234,6 +241,35 @@ class IronicDriver(virt_driver.ComputeDriver):
         # Associate the node with an instance
         patch.append({'path': '/instance_uuid', 'op': 'add',
                       'value': instance['uuid']})
+
+        if configdrive.required_by(instance):
+            LOG.info(_('Using config drive'), instance=instance)
+            extra_md = {}
+            if admin_pass:
+                extra_md['admin_pass'] = admin_pass
+
+            inst_md = instance_metadata.InstanceMetadata(instance,
+                content=files, extra_md=extra_md, network_info=network_info)
+
+            fd, configdrive_path = tempfile.mkstemp()
+            os.close(fd)
+
+            with configdrive.ConfigDriveBuilder(instance_md=inst_md) as cdb:
+                try:
+                    cdb.make_drive(configdrive_path)
+                except processutils.ProcessExecutionError as e:
+                    with excutils.save_and_reraise_exception():
+                        LOG.error(_('Creating config drive failed '
+                                  'with error: %s'),
+                                  e, instance=instance)
+            # gzip the configdrive.
+            with open(configdrive_path, "rb") as configdrive_fh:
+                configdrive_payload = base64.b64encode(zlib.compress(
+                                                            configdrive_fh.read()))
+            os.remove(configdrive_path)
+            patch.append({'path': '/instance_info/config_drive', 'op': 'add',
+                      'value': configdrive_payload})
+
         try:
             icli.call('node.update', node.uuid, patch)
         except ironic_exception.BadRequest:
@@ -250,6 +286,9 @@ class IronicDriver(virt_driver.ComputeDriver):
 
         # Unassociate the node
         patch.append({'op': 'remove', 'path': '/instance_uuid'})
+        # remove configDrive
+        patch.append({'op': 'remove', 'path': '/instance_info/config_drive'})
+
         try:
             icli.call('node.update', node.uuid, patch)
         except ironic_exception.BadRequest:
@@ -405,7 +444,8 @@ class IronicDriver(virt_driver.ComputeDriver):
 
         flavor = flavor_obj.Flavor.get_by_id(context,
                                              instance['instance_type_id'])
-        self._add_driver_fields(node, instance, image_meta, flavor)
+        self._add_driver_fields(node, instance, image_meta, flavor, 
+                                    admin_password, injected_files, network_info)
 
         #validate we ready to do the deploy
         validate_chk = icli.call("node.validate", node_uuid)
