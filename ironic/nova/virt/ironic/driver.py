@@ -304,11 +304,7 @@ class IronicDriver(virt_driver.ComputeDriver):
 
     def _wait_for_active(self, icli, instance):
         """ Wait for the node to be marked as ACTIVE in Ironic """
-        try:
-            node = icli.call("node.get_by_instance_uuid", instance['uuid'])
-        except ironic_exception.NotFound:
-            raise exception.InstanceNotFound(instance_id=instance['uuid'])
-
+        node = validate_instance_and_node(icli, instance)
         if node.provision_state == ironic_states.ACTIVE:
             # job is done
             raise loopingcall.LoopingCallDone()
@@ -354,9 +350,9 @@ class IronicDriver(virt_driver.ComputeDriver):
         """
         icli = client_wrapper.IronicClientWrapper()
         try:
-            icli.call("node.get_by_instance_uuid", instance['uuid'])
+            validate_instance_and_node(icli, instance)
             return True
-        except ironic_exception.NotFound:
+        except exception.InstanceNotFound:
             return False
 
     def list_instances(self):
@@ -406,8 +402,8 @@ class IronicDriver(virt_driver.ComputeDriver):
     def get_info(self, instance):
         icli = client_wrapper.IronicClientWrapper()
         try:
-            node = icli.call("node.get_by_instance_uuid", instance['uuid'])
-        except ironic_exception.NotFound:
+            node = validate_instance_and_node(icli, instance)
+        except exception.InstanceNotFound:
             return {'state': map_power_state(ironic_states.NOSTATE),
                     'max_mem': 0,
                     'mem': 0,
@@ -446,6 +442,13 @@ class IronicDriver(virt_driver.ComputeDriver):
                                              instance['instance_type_id'])
         self._add_driver_fields(node, instance, image_meta, flavor, 
                                     admin_password, injected_files, network_info)
+
+        # NOTE(Shrews): The default ephemeral device needs to be set for
+        # services (like cloud-init) that depend on it being returned by the
+        # metadata server. Addresses bug https://launchpad.net/bugs/1324286.
+        if flavor['ephemeral_gb']:
+            instance.default_ephemeral_device = '/dev/sda1'
+            instance.save()
 
         #validate we ready to do the deploy
         validate_chk = icli.call("node.validate", node_uuid)
@@ -510,11 +513,7 @@ class IronicDriver(virt_driver.ComputeDriver):
         data = {'tries': 0}
 
         def _wait_for_provision_state():
-            try:
-                node = icli.call("node.get_by_instance_uuid", instance['uuid'])
-            except ironic_exception.NotFound:
-                raise exception.InstanceNotFound(instance_id=instance['uuid'])
-
+            node = validate_instance_and_node(icli, instance)
             if not node.provision_state:
                 raise loopingcall.LoopingCallDone()
 

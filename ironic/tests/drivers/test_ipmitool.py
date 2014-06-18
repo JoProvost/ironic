@@ -23,6 +23,7 @@ import mock
 import os
 import stat
 import tempfile
+import time
 
 from oslo.config import cfg
 
@@ -44,7 +45,47 @@ from ironic.tests.objects import utils as obj_utils
 
 CONF = cfg.CONF
 
+CONF.import_opt('min_command_interval',
+                'ironic.drivers.modules.ipminative',
+                group='ipmi')
+
 INFO_DICT = db_utils.get_test_ipmi_info()
+
+
+class IPMIToolCheckTimingTestCase(base.TestCase):
+
+    @mock.patch.object(ipmi, '_is_timing_supported')
+    @mock.patch.object(utils, 'execute')
+    def test_check_timing_pass(self, mock_exc, mock_timing):
+        mock_exc.return_value = (None, None)
+        mock_timing.return_value = None
+        expected = [mock.call(), mock.call(True)]
+
+        ipmi.check_timing_support()
+        self.assertTrue(mock_exc.called)
+        self.assertEqual(expected, mock_timing.call_args_list)
+
+    @mock.patch.object(ipmi, '_is_timing_supported')
+    @mock.patch.object(utils, 'execute')
+    def test_check_timing_fail(self, mock_exc, mock_timing):
+        mock_exc.side_effect = processutils.ProcessExecutionError()
+        mock_timing.return_value = None
+        expected = [mock.call(), mock.call(False)]
+
+        ipmi.check_timing_support()
+        self.assertTrue(mock_exc.called)
+        self.assertEqual(expected, mock_timing.call_args_list)
+
+    @mock.patch.object(ipmi, '_is_timing_supported')
+    @mock.patch.object(utils, 'execute')
+    def test_check_timing_no_ipmitool(self, mock_exc, mock_timing):
+        mock_exc.side_effect = OSError()
+        mock_timing.return_value = None
+        expected = [mock.call()]
+
+        self.assertRaises(OSError, ipmi.check_timing_support)
+        self.assertTrue(mock_exc.called)
+        self.assertEqual(expected, mock_timing.call_args_list)
 
 
 class IPMIToolPrivateMethodTestCase(base.TestCase):
@@ -104,9 +145,13 @@ class IPMIToolPrivateMethodTestCase(base.TestCase):
                           ipmi._parse_driver_info,
                           node)
 
+    @mock.patch.object(time, 'sleep')
+    @mock.patch.object(ipmi, '_is_timing_supported')
     @mock.patch.object(ipmi, '_make_password_file', autospec=True)
     @mock.patch.object(utils, 'execute', autospec=True)
-    def test__exec_ipmitool(self, mock_exec, mock_pwf):
+    def test__exec_ipmitool_first_call_to_address(self, mock_exec, mock_pwf,
+            mock_timing_support, mock_sleep):
+        ipmi.LAST_CMD_TIME = {}
         pw_file_handle = tempfile.NamedTemporaryFile()
         pw_file = pw_file_handle.name
         file_handle = open(pw_file, "w")
@@ -120,21 +165,156 @@ class IPMIToolPrivateMethodTestCase(base.TestCase):
             'A', 'B', 'C',
             ]
 
+        mock_timing_support.return_value = False
         mock_pwf.return_value = file_handle
         mock_exec.return_value = (None, None)
 
         ipmi._exec_ipmitool(self.info, 'A B C')
 
         mock_pwf.assert_called_once_with(self.info['password'])
-        mock_exec.assert_called_once_with(*args, attempts=3)
+        mock_exec.assert_called_once_with(*args)
+        self.assertFalse(mock_sleep.called)
 
+    @mock.patch.object(time, 'sleep')
+    @mock.patch.object(ipmi, '_is_timing_supported')
     @mock.patch.object(ipmi, '_make_password_file', autospec=True)
     @mock.patch.object(utils, 'execute', autospec=True)
-    def test__exec_ipmitool_without_password(self, mock_exec, mock_pwf):
-        self.info['password'] = None
+    def test__exec_ipmitool_second_call_to_address_sleep(self, mock_exec,
+            mock_pwf, mock_timing_support, mock_sleep):
+        ipmi.LAST_CMD_TIME = {}
+        pw_file_handle1 = tempfile.NamedTemporaryFile()
+        pw_file1 = pw_file_handle1.name
+        file_handle1 = open(pw_file1, "w")
+        pw_file_handle2 = tempfile.NamedTemporaryFile()
+        pw_file2 = pw_file_handle2.name
+        file_handle2 = open(pw_file2, "w")
+        args = [[
+            'ipmitool',
+            '-I', 'lanplus',
+            '-H', self.info['address'],
+            '-L', self.info['priv_level'],
+            '-U', self.info['username'],
+            '-f', file_handle1,
+            'A', 'B', 'C',
+        ],
+        [
+            'ipmitool',
+            '-I', 'lanplus',
+            '-H', self.info['address'],
+            '-L', self.info['priv_level'],
+            '-U', self.info['username'],
+            '-f', file_handle2,
+            'D', 'E', 'F',
+        ]]
+
+        mock_timing_support.return_value = False
+        mock_pwf.side_effect = iter([file_handle1, file_handle2])
+        mock_exec.side_effect = iter([(None, None), (None, None)])
+
+        ipmi._exec_ipmitool(self.info, 'A B C')
+        mock_exec.assert_called_with(*args[0])
+
+        ipmi._exec_ipmitool(self.info, 'D E F')
+        self.assertTrue(mock_sleep.called)
+        mock_exec.assert_called_with(*args[1])
+
+    @mock.patch.object(time, 'sleep')
+    @mock.patch.object(ipmi, '_is_timing_supported')
+    @mock.patch.object(ipmi, '_make_password_file', autospec=True)
+    @mock.patch.object(utils, 'execute', autospec=True)
+    def test__exec_ipmitool_second_call_to_address_no_sleep(self, mock_exec,
+            mock_pwf, mock_timing_support, mock_sleep):
+        ipmi.LAST_CMD_TIME = {}
+        pw_file_handle1 = tempfile.NamedTemporaryFile()
+        pw_file1 = pw_file_handle1.name
+        file_handle1 = open(pw_file1, "w")
+        pw_file_handle2 = tempfile.NamedTemporaryFile()
+        pw_file2 = pw_file_handle2.name
+        file_handle2 = open(pw_file2, "w")
+        args = [[
+            'ipmitool',
+            '-I', 'lanplus',
+            '-H', self.info['address'],
+            '-L', self.info['priv_level'],
+            '-U', self.info['username'],
+            '-f', file_handle1,
+            'A', 'B', 'C',
+        ],
+        [
+            'ipmitool',
+            '-I', 'lanplus',
+            '-H', self.info['address'],
+            '-L', self.info['priv_level'],
+            '-U', self.info['username'],
+            '-f', file_handle2,
+            'D', 'E', 'F',
+        ]]
+
+        mock_timing_support.return_value = False
+        mock_pwf.side_effect = iter([file_handle1, file_handle2])
+        mock_exec.side_effect = iter([(None, None), (None, None)])
+
+        ipmi._exec_ipmitool(self.info, 'A B C')
+        mock_exec.assert_called_with(*args[0])
+        # act like enough time has passed
+        ipmi.LAST_CMD_TIME[self.info['address']] = (time.time() -
+                CONF.ipmi.min_command_interval)
+        ipmi._exec_ipmitool(self.info, 'D E F')
+        self.assertFalse(mock_sleep.called)
+        mock_exec.assert_called_with(*args[1])
+
+    @mock.patch.object(time, 'sleep')
+    @mock.patch.object(ipmi, '_is_timing_supported')
+    @mock.patch.object(ipmi, '_make_password_file', autospec=True)
+    @mock.patch.object(utils, 'execute', autospec=True)
+    def test__exec_ipmitool_two_calls_to_diff_address(self, mock_exec,
+            mock_pwf, mock_timing_support, mock_sleep):
+        ipmi.LAST_CMD_TIME = {}
+        pw_file_handle1 = tempfile.NamedTemporaryFile()
+        pw_file1 = pw_file_handle1.name
+        file_handle1 = open(pw_file1, "w")
+        pw_file_handle2 = tempfile.NamedTemporaryFile()
+        pw_file2 = pw_file_handle2.name
+        file_handle2 = open(pw_file2, "w")
+        args = [[
+            'ipmitool',
+            '-I', 'lanplus',
+            '-H', self.info['address'],
+            '-L', self.info['priv_level'],
+            '-U', self.info['username'],
+            '-f', file_handle1,
+            'A', 'B', 'C',
+        ],
+        [
+            'ipmitool',
+            '-I', 'lanplus',
+            '-H', '127.127.127.127',
+            '-L', self.info['priv_level'],
+            '-U', self.info['username'],
+            '-f', file_handle2,
+            'D', 'E', 'F',
+        ]]
+
+        mock_timing_support.return_value = False
+        mock_pwf.side_effect = iter([file_handle1, file_handle2])
+        mock_exec.side_effect = iter([(None, None), (None, None)])
+
+        ipmi._exec_ipmitool(self.info, 'A B C')
+        mock_exec.assert_called_with(*args[0])
+        self.info['address'] = '127.127.127.127'
+        ipmi._exec_ipmitool(self.info, 'D E F')
+        self.assertFalse(mock_sleep.called)
+        mock_exec.assert_called_with(*args[1])
+
+    @mock.patch.object(ipmi, '_is_timing_supported')
+    @mock.patch.object(ipmi, '_make_password_file', autospec=True)
+    @mock.patch.object(utils, 'execute', autospec=True)
+    def test__exec_ipmitool_without_timing(self, mock_exec, mock_pwf,
+            mock_timing_support):
         pw_file_handle = tempfile.NamedTemporaryFile()
         pw_file = pw_file_handle.name
         file_handle = open(pw_file, "w")
+
         args = [
             'ipmitool',
             '-I', 'lanplus',
@@ -145,15 +325,49 @@ class IPMIToolPrivateMethodTestCase(base.TestCase):
             'A', 'B', 'C',
             ]
 
+        mock_timing_support.return_value = False
         mock_pwf.return_value = file_handle
         mock_exec.return_value = (None, None)
-        ipmi._exec_ipmitool(self.info, 'A B C')
-        self.assertTrue(mock_pwf.called)
-        mock_exec.assert_called_once_with(*args, attempts=3)
 
+        ipmi._exec_ipmitool(self.info, 'A B C')
+
+        mock_pwf.assert_called_once_with(self.info['password'])
+        mock_exec.assert_called_once_with(*args)
+
+    @mock.patch.object(ipmi, '_is_timing_supported')
     @mock.patch.object(ipmi, '_make_password_file', autospec=True)
     @mock.patch.object(utils, 'execute', autospec=True)
-    def test__exec_ipmitool_without_username(self, mock_exec, mock_pwf):
+    def test__exec_ipmitool_with_timing(self, mock_exec, mock_pwf,
+            mock_timing_support):
+        pw_file_handle = tempfile.NamedTemporaryFile()
+        pw_file = pw_file_handle.name
+        file_handle = open(pw_file, "w")
+        args = [
+            'ipmitool',
+            '-I', 'lanplus',
+            '-H', self.info['address'],
+            '-L', self.info['priv_level'],
+            '-U', self.info['username'],
+            '-R', '12',
+            '-N', '5',
+            '-f', file_handle,
+            'A', 'B', 'C',
+            ]
+
+        mock_timing_support.return_value = True
+        mock_pwf.return_value = file_handle
+        mock_exec.return_value = (None, None)
+
+        ipmi._exec_ipmitool(self.info, 'A B C')
+
+        mock_pwf.assert_called_once_with(self.info['password'])
+        mock_exec.assert_called_once_with(*args)
+
+    @mock.patch.object(ipmi, '_is_timing_supported')
+    @mock.patch.object(ipmi, '_make_password_file', autospec=True)
+    @mock.patch.object(utils, 'execute', autospec=True)
+    def test__exec_ipmitool_without_username(self, mock_exec, mock_pwf,
+            mock_timing_support):
         self.info['username'] = None
         pw_file_handle = tempfile.NamedTemporaryFile()
         pw_file = pw_file_handle.name
@@ -167,15 +381,18 @@ class IPMIToolPrivateMethodTestCase(base.TestCase):
             'A', 'B', 'C',
             ]
 
+        mock_timing_support.return_value = False
         mock_pwf.return_value = file_handle
         mock_exec.return_value = (None, None)
         ipmi._exec_ipmitool(self.info, 'A B C')
         self.assertTrue(mock_pwf.called)
-        mock_exec.assert_called_once_with(*args, attempts=3)
+        mock_exec.assert_called_once_with(*args)
 
+    @mock.patch.object(ipmi, '_is_timing_supported')
     @mock.patch.object(ipmi, '_make_password_file', autospec=True)
     @mock.patch.object(utils, 'execute', autospec=True)
-    def test__exec_ipmitool_exception(self, mock_exec, mock_pwf):
+    def test__exec_ipmitool_exception(self, mock_exec, mock_pwf,
+            mock_timing_support):
         pw_file_handle = tempfile.NamedTemporaryFile()
         pw_file = pw_file_handle.name
         file_handle = open(pw_file, "w")
@@ -189,13 +406,14 @@ class IPMIToolPrivateMethodTestCase(base.TestCase):
             'A', 'B', 'C',
             ]
 
+        mock_timing_support.return_value = False
         mock_pwf.return_value = file_handle
         mock_exec.side_effect = processutils.ProcessExecutionError("x")
         self.assertRaises(processutils.ProcessExecutionError,
                           ipmi._exec_ipmitool,
                           self.info, 'A B C')
         mock_pwf.assert_called_once_with(self.info['password'])
-        mock_exec.assert_called_once_with(*args, attempts=3)
+        mock_exec.assert_called_once_with(*args)
 
     @mock.patch.object(ipmi, '_exec_ipmitool', autospec=True)
     def test__power_status_on(self, mock_exec):
@@ -404,30 +622,48 @@ class IPMIToolDriverTestCase(db_base.DbTestCase):
 
         self.assertEqual(manager.mock_calls, expected)
 
-    def test_vendor_passthru_validate__set_boot_device_good(self):
+    @mock.patch.object(ipmi, '_parse_driver_info')
+    def test_vendor_passthru_validate__set_boot_device_good(self, info_mock):
         with task_manager.acquire(self.context, self.node['uuid']) as task:
             self.driver.vendor.validate(task,
                                         method='set_boot_device',
                                         device='pxe')
+            info_mock.assert_called_once_with(task.node)
 
-    def test_vendor_passthru_validate__set_boot_device_fail(self):
+    @mock.patch.object(ipmi, '_parse_driver_info')
+    def test_vendor_passthru_validate__set_boot_device_fail(self, info_mock):
         with task_manager.acquire(self.context, self.node['uuid']) as task:
             self.assertRaises(exception.InvalidParameterValue,
                               self.driver.vendor.validate,
                               task, method='set_boot_device',
                               device='fake')
+            self.assertFalse(info_mock.called)
 
-    def test_vendor_passthru_validate__set_boot_device_fail_no_device(self):
+    @mock.patch.object(ipmi, '_parse_driver_info')
+    def test_vendor_passthru_validate__set_boot_device_fail_no_device(
+                self, info_mock):
         with task_manager.acquire(self.context, self.node['uuid']) as task:
             self.assertRaises(exception.InvalidParameterValue,
                               self.driver.vendor.validate,
                               task, method='set_boot_device')
+            self.assertFalse(info_mock.called)
 
-    def test_vendor_passthru_validate_method_notmatch(self):
+    @mock.patch.object(ipmi, '_parse_driver_info')
+    def test_vendor_passthru_validate_method_notmatch(self, info_mock):
         with task_manager.acquire(self.context, self.node['uuid']) as task:
             self.assertRaises(exception.InvalidParameterValue,
                               self.driver.vendor.validate,
                               task, method='fake_method')
+            self.assertFalse(info_mock.called)
+
+    @mock.patch.object(ipmi, '_parse_driver_info')
+    def test_vendor_passthru_validate__parse_driver_info_fail(self, info_mock):
+        info_mock.side_effect = exception.InvalidParameterValue("bad")
+        with task_manager.acquire(self.context, self.node['uuid']) as task:
+            self.assertRaises(exception.InvalidParameterValue,
+                              self.driver.vendor.validate,
+                              task, method='set_boot_device', device='pxe')
+            info_mock.assert_called_once_with(task.node)
 
     @mock.patch.object(ipmi.VendorPassthru, '_set_boot_device')
     def test_vendor_passthru_call_set_boot_device(self, boot_mock):
@@ -437,24 +673,6 @@ class IPMIToolDriverTestCase(db_base.DbTestCase):
                                                method='set_boot_device',
                                                device='pxe')
             boot_mock.assert_called_once_with(task, 'pxe', False)
-
-    @mock.patch.object(ipmi, '_exec_ipmitool')
-    def test_validate_ok(self, exec_mock):
-        exec_mock.return_value = ('System GUID: fake', '')
-        with task_manager.acquire(self.context,
-                                  self.node['uuid']) as task:
-            task.driver.power.validate(task, task.node)
-            exec_mock.assert_called_once_with(mock.ANY, "mc guid")
-
-    @mock.patch.object(ipmi, '_exec_ipmitool')
-    def test_validate_fail(self, exec_mock):
-        exec_mock.side_effect = Exception
-        with task_manager.acquire(self.context,
-                                  self.node['uuid']) as task:
-            self.assertRaises(exception.InvalidParameterValue,
-                              task.driver.power.validate, task,
-                              task.node)
-            exec_mock.assert_called_once_with(mock.ANY, "mc guid")
 
     @mock.patch.object(console_utils, 'start_shellinabox_console',
                        autospec=True)

@@ -706,6 +706,12 @@
 # value)
 #retry_timeout=60
 
+# Minimum time, in seconds, between IPMI operations sent to a
+# server. There is a risk with some hardware that setting this
+# too low may cause the BMC to crash. Recommended setting is 5
+# seconds. (integer value)
+#min_command_interval=5
+
 
 [keystone_authtoken]
 
@@ -904,13 +910,6 @@
 # is created. (string value)
 #default_ephemeral_format=ext4
 
-# IP address of Ironic compute node's tftp server. (string
-# value)
-#tftp_server=$my_ip
-
-# Ironic compute node's tftp root path. (string value)
-#tftp_root=/tftpboot
-
 # Directory where images are stored on disk. (string value)
 #images_path=/var/lib/ironic/images/
 
@@ -956,5 +955,19 @@
 
 # libvirt uri (string value)
 #libvirt_uri=qemu:///system
+
+
+[tftp]
+
+#
+# Options defined in ironic.common.tftp
+#
+
+# IP address of Ironic compute node's tftp server. (string
+# value)
+#tftp_server=$my_ip
+
+# Ironic compute node's tftp root path. (string value)
+#tftp_root=/tftpboot
 
 

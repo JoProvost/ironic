@@ -43,7 +43,6 @@ utils_opts = [
                help='Path to the rootwrap configuration file to use for '
                     'running commands as root.'),
     cfg.StrOpt('tempdir',
-               default=None,
                help='Explicitly specify the temporary working directory.'),
 ]
 
@@ -59,7 +58,7 @@ def _get_root_helper():
 
 def execute(*cmd, **kwargs):
     """Convenience wrapper around oslo's execute() method."""
-    if kwargs.get('run_as_root') and not 'root_helper' in kwargs:
+    if kwargs.get('run_as_root') and 'root_helper' not in kwargs:
         kwargs['root_helper'] = _get_root_helper()
     result = processutils.execute(*cmd, **kwargs)
     LOG.debug('Execution completed, command line is "%s"', ' '.join(cmd))
@@ -70,7 +69,7 @@ def execute(*cmd, **kwargs):
 
 def trycmd(*args, **kwargs):
     """Convenience wrapper around oslo's trycmd() method."""
-    if kwargs.get('run_as_root') and not 'root_helper' in kwargs:
+    if kwargs.get('run_as_root') and 'root_helper' not in kwargs:
         kwargs['root_helper'] = _get_root_helper()
     return processutils.trycmd(*args, **kwargs)
 

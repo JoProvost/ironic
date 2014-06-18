@@ -93,19 +93,16 @@ class BaseDriver(object):
 class DeployInterface(object):
     """Interface for deploy-related actions."""
 
-    # TODO(lucasagomes): The 'node' parameter needs to be passed to validate()
-    # because of the ConductorManager.validate_driver_interfaces().
-    # Remove it after all cleaning all the interfaces
     @abc.abstractmethod
-    def validate(self, task, node):
+    def validate(self, task):
         """Validate the driver-specific Node deployment info.
 
         This method validates whether the 'driver_info' property of the
         task's node contains the required information for this driver to
-        deploy images to the node.
+        deploy images to the node. If invalid, raises an exception; otherwise
+        returns None.
 
         :param task: a TaskManager instance containing the node to act on.
-        :param node: a single Node to validate.
         :raises: InvalidParameterValue
         """
 
@@ -192,19 +189,16 @@ class DeployInterface(object):
 class PowerInterface(object):
     """Interface for power-related actions."""
 
-    # TODO(lucasagomes): The 'node' parameter needs to be passed to validate()
-    # because of the ConductorManager.validate_driver_interfaces().
-    # Remove it after all cleaning all the interfaces
     @abc.abstractmethod
-    def validate(self, task, node):
+    def validate(self, task):
         """Validate the driver-specific Node power info.
 
         This method validates whether the 'driver_info' property of the
         supplied node contains the required information for this driver to
-        manage the power state of the node.
+        manage the power state of the node. If invalid, raises an exception;
+        otherwise, returns None.
 
         :param task: a TaskManager instance containing the node to act on.
-        :param node: a single Node to validate.
         :raises: InvalidParameterValue
         """
 
@@ -236,19 +230,16 @@ class PowerInterface(object):
 class ConsoleInterface(object):
     """Interface for console-related actions."""
 
-    # TODO(lucasagomes): The 'node' parameter needs to be passed to validate()
-    # because of the ConductorManager.validate_driver_interfaces().
-    # Remove it after all cleaning all the interfaces
     @abc.abstractmethod
-    def validate(self, task, node):
+    def validate(self, task):
         """Validate the driver-specific Node console info.
 
         This method validates whether the 'driver_info' property of the
         supplied node contains the required information for this driver to
-        provide console access to the Node.
+        provide console access to the Node. If invalid, raises an exception;
+        otherwise returns None.
 
         :param task: a TaskManager instance containing the node to act on.
-        :param node: a single Node to validate.
         :raises: InvalidParameterValue
         """
 
@@ -282,15 +273,13 @@ class ConsoleInterface(object):
 class RescueInterface(object):
     """Interface for rescue-related actions."""
 
-    # TODO(lucasagomes): The 'node' parameter needs to be passed to validate()
-    # because of the ConductorManager.validate_driver_interfaces().
-    # Remove it after all cleaning all the interfaces
     @abc.abstractmethod
-    def validate(self, task, node):
+    def validate(self, task):
         """Validate the rescue info stored in the node' properties.
 
+        If invalid, raises an exception; otherwise returns None.
+
         :param task: a TaskManager instance containing the node to act on.
-        :param node: a single Node to validate.
         :raises: InvalidParameterValue
         """
 
@@ -324,6 +313,8 @@ class VendorInterface(object):
     @abc.abstractmethod
     def validate(self, task, **kwargs):
         """Validate vendor-specific actions.
+
+        If invalid, raises an exception; otherwise returns None.
 
         :param task: a task from TaskManager.
         :param kwargs: info for action.
@@ -366,16 +357,13 @@ class VendorInterface(object):
 class ManagementInterface(object):
     """Interface for management related actions."""
 
-    # TODO(lucasagomes): The 'node' parameter
-    # needs to be passed to validate() because of the
-    # ConductorManager.validate_driver_interfaces(). Remove it as part of
-    # https://bugs.launchpad.net/ironic/+bug/1312632.
     @abc.abstractmethod
-    def validate(self, task, node):
+    def validate(self, task):
         """Validate the driver-specific management information.
 
+        If invalid, raises an exception; otherwise returns None.
+
         :param task: a task from TaskManager.
-        :param node: a single Node to validate.
         :raises: InvalidParameterValue
         """
 
