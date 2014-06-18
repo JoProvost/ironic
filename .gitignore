@@ -31,3 +31,5 @@ cover
 AUTHORS
 ChangeLog
 *.sqlite
+.idea
+*.iml

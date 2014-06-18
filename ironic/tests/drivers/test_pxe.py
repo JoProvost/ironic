@@ -561,13 +561,11 @@ class PXEDriverTestCase(db_base.DbTestCase):
             mock_ks.assert_called_once_with()
 
     @mock.patch.object(base_image_service.BaseImageService, '_show')
-    def test_validate_fail_no_image_kernel_ramdisk_props(self, mock_glance):
+    def test_validate_allow_no_image_kernel_ramdisk_props(self, mock_glance):
         mock_glance.return_value = {'properties': {}}
         with task_manager.acquire(self.context, self.node.uuid,
                                   shared=True) as task:
-            self.assertRaises(exception.InvalidParameterValue,
-                              task.driver.deploy.validate,
-                              task)
+            task.driver.deploy.validate(task)
 
     @mock.patch.object(base_image_service.BaseImageService, '_show')
     def test_validate_fail_glance_image_doesnt_exists(self, mock_glance):
@@ -723,6 +721,11 @@ class PXEDriverTestCase(db_base.DbTestCase):
         token_path = self._create_token_file()
         self.node.power_state = states.POWER_ON
         self.node.provision_state = states.DEPLOYWAIT
+        # add internal image info
+        info = self.node.driver_info
+        info['pxe_kernel'] = 'some-kernel-image-uuid'
+        info['pxe_ramdisk'] = 'some-ramdisk-image-uuid'
+        self.node.driver_info = info
         self.node.save()
 
         def fake_deploy(**kwargs):

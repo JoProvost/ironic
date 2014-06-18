@@ -176,7 +176,6 @@ def _build_pxe_config_options(node, pxe_info, ctx):
         'ari_path': pxe_info.get('ramdisk', ['', ''])[1],
         'ironic_api_url': ironic_api,
         'pxe_append_params': CONF.pxe.pxe_append_params,
-        'boot_ami': pxe_info.get('kernel') and pxe_info.get('ramdisk'),
     }
     return pxe_options
 
@@ -479,20 +478,6 @@ def _validate_glance_image(ctx, driver_info):
     return image_props
 
 
-def _is_ami_glance_image(task, node):
-    """Check if the image in Glance is AMI.
-
-    :raises: InvalidParameterValue.
-    :returns: True if it is AMI
-    """
-    d_info = _parse_driver_info(node)
-    image_props = _validate_glance_image(task.context, d_info)
-    for prop in ('kernel_id', 'ramdisk_id'):
-        if not image_props.get(prop):
-            return False
-    return True
-
-
 class PXEDeploy(base.DeployInterface):
     """PXE Deploy Interface: just a stub until the real driver is ported."""
 
@@ -699,7 +684,8 @@ class VendorPassthru(base.VendorInterface):
         LOG.info(_('Continuing deployment for node %(node)s, params '
                    '%(params)s') % {'node': node.uuid, 'params': params})
 
-        is_ami = _is_ami_glance_image(task, node)
+        is_ami = (node.driver_info.get('pxe_kernel') and
+                  node.driver_info.get('pxe_ramdisk'))
 
         try:
             if is_ami:
@@ -718,7 +704,8 @@ class VendorPassthru(base.VendorInterface):
             node.save(task.context)
 
             if not is_ami:
-                #manager_utils.node_set_boot_device(task, 'disk', persistent=True)
+                #manager_utils.node_set_boot_device(task, 'disk',
+                #                                   persistent=True)
                 utils.unlink_without_raise(tftp.get_pxe_config_file_path(
                     node.uuid))
                 for port in driver_utils.get_node_mac_addresses(task):
