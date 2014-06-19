@@ -172,8 +172,8 @@ def _build_pxe_config_options(node, pxe_info, ctx):
         'deployment_iscsi_iqn': "iqn-%s" % node.uuid,
         'deployment_aki_path': pxe_info['deploy_kernel'][1],
         'deployment_ari_path': pxe_info['deploy_ramdisk'][1],
-        'aki_path': pxe_info['kernel'][1],
-        'ari_path': pxe_info['ramdisk'][1],
+        'aki_path': pxe_info.get('kernel', ['', ''])[1],
+        'ari_path': pxe_info.get('ramdisk', ['', ''])[1],
         'ironic_api_url': ironic_api,
         'pxe_append_params': CONF.pxe.pxe_append_params,
     }
@@ -332,12 +332,16 @@ def _get_tftp_image_info(node, ctx):
         glance_service = service.Service(version=1, context=ctx)
         iproperties = glance_service.show(d_info['image_source'])['properties']
         for label in labels:
+            if label + '_id' not in iproperties:
+                continue
             driver_info['pxe_' + label] = str(iproperties[label +
                                               '_id']).split('/')[-1]
         node.driver_info = driver_info
         node.save(ctx)
 
     for label in labels:
+        if 'pxe_' + label not in driver_info:
+            continue
         image_info[label] = (
             driver_info['pxe_' + label],
             os.path.join(CONF.tftp.tftp_root, node.uuid, label)
@@ -395,10 +399,11 @@ def _check_image_size(task):
 def _validate_glance_image(ctx, driver_info):
     """Validate the image in Glance.
 
-    Check if the image exist in Glance and if it contains the
+    Check if the image exist in Glance and return its
     'kernel_id' and 'ramdisk_id' properties.
 
     :raises: InvalidParameterValue.
+    :returns: the image properties
     """
     image_id = driver_info['image_source']
     try:
@@ -414,16 +419,7 @@ def _validate_glance_image(ctx, driver_info):
         raise exception.InvalidParameterValue(_(
             "Image %s not found in Glance") % image_id)
 
-    missing_props = []
-    for prop in ('kernel_id', 'ramdisk_id'):
-        if not image_props.get(prop):
-            missing_props.append(prop)
-
-    if missing_props:
-        props = ', '.join(missing_props)
-        raise exception.InvalidParameterValue(_(
-            "Image %(image)s is missing the following properties: "
-            "%(properties)s") % {'image': image_id, 'properties': props})
+    return image_props
 
 
 class PXEDeploy(base.DeployInterface):
@@ -632,8 +628,14 @@ class VendorPassthru(base.VendorInterface):
         LOG.info(_('Continuing deployment for node %(node)s, params '
                    '%(params)s') % {'node': node.uuid, 'params': params})
 
+        is_ami = (node.driver_info.get('pxe_kernel') and
+                  node.driver_info.get('pxe_ramdisk'))
+
         try:
-            deploy_utils.deploy(**params)
+            if is_ami:
+                deploy_utils.deploy(**params)
+            else:
+                deploy_utils.deploy_disk_image(**params)
         except Exception as e:
             LOG.error(_('PXE deploy failed for instance %(instance)s. '
                         'Error: %(error)s') % {'instance': node.instance_uuid,
@@ -644,6 +646,12 @@ class VendorPassthru(base.VendorInterface):
             node.provision_state = states.ACTIVE
             node.target_provision_state = states.NOSTATE
             node.save(task.context)
+
+            if not is_ami:
+                #manager_utils.node_set_boot_device(task, 'disk',
+                #                                   persistent=True)
+                tftp.clean_up_pxe_config(task)
+                neutron.update_neutron(task, None)
 
         _destroy_images(driver_info, node.uuid)
 

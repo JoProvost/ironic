@@ -318,6 +318,39 @@ def work_on_disk(dev, root_mb, swap_mb, ephemeral_mb, ephemeral_format,
     return root_uuid
 
 
+def deploy_disk_image(address, port, iqn, lun, image_path, **kwargs):
+    """Deploy a disk image to a node.
+
+    :param address: The iSCSI IP address.
+    :param port: The iSCSI port number.
+    :param iqn: The iSCSI qualified name.
+    :param lun: The iSCSI logical unit number.
+    :param image_path: Path for the instance's disk image.
+
+    """
+    dev = get_dev(address, port, iqn, lun)
+    discovery(address, port)
+    login_iscsi(address, port, iqn)
+    try:
+        dd(image_path, dev)
+    except processutils.ProcessExecutionError as err:
+        with excutils.save_and_reraise_exception():
+            LOG.error(_("Deploy to address %s failed.") % address)
+            LOG.error(_("Command: %s") % err.cmd)
+            LOG.error(_("StdOut: %r") % err.stdout)
+            LOG.error(_("StdErr: %r") % err.stderr)
+    except exception.InstanceDeployFailure as e:
+        with excutils.save_and_reraise_exception():
+            LOG.error(_("Deploy to address %s failed.") % address)
+            LOG.error(e)
+    finally:
+        logout_iscsi(address, port, iqn)
+        delete_iscsi(address, port, iqn)
+    # Ensure the node started netcat on the port after POST the request.
+    time.sleep(3)
+    notify(address, 10000)
+
+
 def deploy(address, port, iqn, lun, image_path, pxe_config_path,
            root_mb, swap_mb, ephemeral_mb, ephemeral_format, node_uuid,
            preserve_ephemeral=False):

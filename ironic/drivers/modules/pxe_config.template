@@ -6,6 +6,7 @@ append initrd={{ pxe_options.deployment_ari_path }} selinux=0 disk=cciss/c0d0,sd
 ipappend 3
 
 
+{% if pxe_options.aki_path and pxe_options.ari_path -%}
 label boot
 kernel {{ pxe_options.aki_path }}
-append initrd={{ pxe_options.ari_path }} root={{ ROOT }} ro {{ pxe_options.pxe_append_params|default("", true) }}
+append initrd={{ pxe_options.ari_path }} root={{ ROOT }} ro {{ pxe_options.pxe_append_params|default("", true) }}{% endif -%}
