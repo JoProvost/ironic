@@ -180,22 +180,6 @@ def _build_pxe_config_options(node, pxe_info, ctx):
     return pxe_options
 
 
-def _get_node_vif_ids(task):
-    """Get all Neutron VIF ids for a node.
-       This function does not handle multi node operations.
-
-    :param task: a TaskManager instance.
-    :returns: A dict of the Node's port UUIDs and their associated VIFs
-
-    """
-    port_vifs = {}
-    for port in task.ports:
-        vif = port.extra.get('vif_port_id')
-        if vif:
-            port_vifs[port.uuid] = vif
-    return port_vifs
-
-
 def _get_image_dir_path(node_uuid):
     """Generate the dir for an instances disk."""
     return os.path.join(CONF.pxe.images_path, node_uuid)
@@ -397,46 +381,6 @@ def _remove_internal_attrs(task):
         driver_info.pop(attr, None)
     task.node.driver_info = driver_info
     task.node.save(task.context)
-
-
-def _remove_dhcp_opts(task):
-    """Send or update the DHCP BOOT options to Neutron for this node."""
-    options = [{'opt_name': 'bootfile-name',
-             'opt_value': None},
-            {'opt_name': 'server-ip-address',
-             'opt_value': None},
-            {'opt_name': 'tftp-server',
-             'opt_value': None}
-            ]
-    vifs = _get_node_vif_ids(task)
-    if not vifs:
-        LOG.warning(_("No VIFs found for node %(node)s when attempting to "
-                      "update Neutron DHCP BOOT options."),
-                      {'node': task.node.uuid})
-        return
-
-    # TODO(deva): decouple instantiation of NeutronAPI from task.context.
-    #             Try to use the user's task.context.auth_token, but if it
-    #             is not present, fall back to a server-generated context.
-    #             We don't need to recreate this in every method call.
-    api = neutron.NeutronAPI(task.context)
-    failures = []
-    for port_id, port_vif in vifs.iteritems():
-        try:
-            api.update_port_dhcp_opts(port_vif, options)
-        except exception.FailedToUpdateDHCPOptOnPort:
-            failures.append(port_id)
-
-    if failures:
-        if len(failures) == len(vifs):
-            raise exception.FailedToUpdateDHCPOptOnPort(_(
-                "Failed to set DHCP BOOT options for any port on node %s.") %
-                task.node.uuid)
-        else:
-            LOG.warning(_("Some errors were encountered when updating the "
-                          "DHCP BOOT options for node %(node)s on the "
-                          "following ports: %(ports)s."),
-                          {'node': task.node.uuid, 'ports': failures})
 
 
 def _check_image_size(task):
@@ -706,15 +650,8 @@ class VendorPassthru(base.VendorInterface):
             if not is_ami:
                 #manager_utils.node_set_boot_device(task, 'disk',
                 #                                   persistent=True)
-                utils.unlink_without_raise(tftp.get_pxe_config_file_path(
-                    node.uuid))
-                for port in driver_utils.get_node_mac_addresses(task):
-                    mac_path = tftp.get_pxe_mac_path(port)
-                    utils.unlink_without_raise(mac_path)
-
-                utils.rmtree_without_raise(
-                        os.path.join(CONF.pxe.tftp_root, node.uuid))
-                _remove_dhcp_opts(task)
+                tftp.clean_up_pxe_config(task)
+                neutron.update_neutron(task, None)
 
         _destroy_images(driver_info, node.uuid)
 
