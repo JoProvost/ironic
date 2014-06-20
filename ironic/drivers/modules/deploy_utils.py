@@ -332,6 +332,9 @@ def deploy_disk_image(address, port, iqn, lun, image_path, **kwargs):
     discovery(address, port)
     login_iscsi(address, port, iqn)
     try:
+        if not is_block_device(dev):
+            raise exception.InstanceDeployFailure(
+                _("Parent device '%s' not found") % dev)
         dd(image_path, dev)
     except processutils.ProcessExecutionError as err:
         with excutils.save_and_reraise_exception():

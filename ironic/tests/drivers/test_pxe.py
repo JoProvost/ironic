@@ -748,10 +748,47 @@ class PXEDriverTestCase(db_base.DbTestCase):
         mock_image_cache.return_value.clean_up.assert_called_once_with()
 
     @mock.patch.object(pxe, 'InstanceImageCache')
+    def test_continue_deploy_disk_image_good(self, mock_image_cache):
+        token_path = self._create_token_file()
+        self.node.power_state = states.POWER_ON
+        self.node.provision_state = states.DEPLOYWAIT
+        # add internal image info
+        info = self.node.driver_info
+        info['pxe_kernel'] = None
+        info['pxe_ramdisk'] = None
+        self.node.driver_info = info
+        self.node.save()
+
+        def fake_deploy(**kwargs):
+            pass
+
+        self.useFixture(fixtures.MonkeyPatch(
+            'ironic.drivers.modules.deploy_utils.deploy_disk_image',
+            fake_deploy))
+
+        with task_manager.acquire(self.context, self.node.uuid) as task:
+            task.driver.vendor.vendor_passthru(
+                task, method='pass_deploy_info', address='123456',
+                iqn='aaa-bbb', key='fake-56789')
+        self.node.refresh(self.context)
+        self.assertEqual(states.ACTIVE, self.node.provision_state)
+        self.assertEqual(states.POWER_ON, self.node.power_state)
+        self.assertIsNone(self.node.last_error)
+        self.assertFalse(os.path.exists(token_path))
+        mock_image_cache.assert_called_once_with()
+        mock_image_cache.return_value.clean_up.assert_called_once_with()
+
+
+    @mock.patch.object(pxe, 'InstanceImageCache')
     def test_continue_deploy_fail(self, mock_image_cache):
         token_path = self._create_token_file()
         self.node.power_state = states.POWER_ON
         self.node.provision_state = states.DEPLOYWAIT
+        # add internal image info
+        info = self.node.driver_info
+        info['pxe_kernel'] = 'some-kernel-image-uuid'
+        info['pxe_ramdisk'] = 'some-ramdisk-image-uuid'
+        self.node.driver_info = info
         self.node.save()
 
         def fake_deploy(**kwargs):
@@ -765,6 +802,37 @@ class PXEDriverTestCase(db_base.DbTestCase):
             task.driver.vendor.vendor_passthru(
                     task, method='pass_deploy_info', address='123456',
                     iqn='aaa-bbb', key='fake-56789')
+        self.node.refresh(self.context)
+        self.assertEqual(states.DEPLOYFAIL, self.node.provision_state)
+        self.assertEqual(states.POWER_OFF, self.node.power_state)
+        self.assertIsNotNone(self.node.last_error)
+        self.assertFalse(os.path.exists(token_path))
+        mock_image_cache.assert_called_once_with()
+        mock_image_cache.return_value.clean_up.assert_called_once_with()
+
+    @mock.patch.object(pxe, 'InstanceImageCache')
+    def test_continue_deploy_disk_image_fail(self, mock_image_cache):
+        token_path = self._create_token_file()
+        self.node.power_state = states.POWER_ON
+        self.node.provision_state = states.DEPLOYWAIT
+        # add internal image info
+        info = self.node.driver_info
+        info['pxe_kernel'] = None
+        info['pxe_ramdisk'] = None
+        self.node.driver_info = info
+        self.node.save()
+
+        def fake_deploy(**kwargs):
+            raise exception.InstanceDeployFailure("test deploy error")
+
+        self.useFixture(fixtures.MonkeyPatch(
+            'ironic.drivers.modules.deploy_utils.deploy_disk_image',
+            fake_deploy))
+
+        with task_manager.acquire(self.context, self.node.uuid) as task:
+            task.driver.vendor.vendor_passthru(
+                task, method='pass_deploy_info', address='123456',
+                iqn='aaa-bbb', key='fake-56789')
         self.node.refresh(self.context)
         self.assertEqual(states.DEPLOYFAIL, self.node.provision_state)
         self.assertEqual(states.POWER_OFF, self.node.power_state)

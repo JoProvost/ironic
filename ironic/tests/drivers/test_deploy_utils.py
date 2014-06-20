@@ -362,6 +362,80 @@ class PhysicalWorkTestCase(tests_base.TestCase):
 
         self.assertEqual(calls_expected, parent_mock.mock_calls)
 
+    def test_deploy_disk_image(self):
+        """Check loosely all functions are called with right args."""
+        address = '127.0.0.1'
+        port = 3306
+        iqn = 'iqn.xyz'
+        lun = 1
+        image_path = '/tmp/xyz/image'
+        node_uuid = "12345678-1234-1234-1234-1234567890abcxyz"
+
+        dev = '/dev/fake'
+
+        name_list = ['get_dev', 'discovery', 'login_iscsi', 'logout_iscsi',
+                     'delete_iscsi', 'is_block_device', 'dd', 'notify']
+        parent_mock = self._mock_calls(name_list)
+        parent_mock.get_dev.return_value = dev
+        parent_mock.is_block_device.return_value = True
+        calls_expected = [mock.call.get_dev(address, port, iqn, lun),
+                          mock.call.discovery(address, port),
+                          mock.call.login_iscsi(address, port, iqn),
+                          mock.call.is_block_device(dev),
+                          mock.call.dd(image_path, dev),
+                          mock.call.logout_iscsi(address, port, iqn),
+                          mock.call.delete_iscsi(address, port, iqn),
+                          mock.call.notify(address, 10000)]
+
+        utils.deploy_disk_image(address, port, iqn, lun, image_path)
+
+        self.assertEqual(calls_expected, parent_mock.mock_calls)
+
+    def test_deploy_disk_image_always_logout_and_delete_iscsi(self):
+        """Check if logout_iscsi() and delete_iscsi() are called.
+
+        Make sure that logout_iscsi() and delete_iscsi() are called once
+        login_iscsi() is invoked.
+
+        """
+        address = '127.0.0.1'
+        port = 3306
+        iqn = 'iqn.xyz'
+        lun = 1
+        image_path = '/tmp/xyz/image'
+
+        dev = '/dev/fake'
+
+        class TestException(Exception):
+            pass
+
+        name_list = ['get_dev', 'discovery', 'login_iscsi', 'logout_iscsi',
+                     'delete_iscsi', 'is_block_device', 'dd']
+        patch_list = [mock.patch.object(utils, name) for name in name_list]
+        mock_list = [patcher.start() for patcher in patch_list]
+        for patcher in patch_list:
+            self.addCleanup(patcher.stop)
+
+        parent_mock = mock.MagicMock()
+        for mocker, name in zip(mock_list, name_list):
+            parent_mock.attach_mock(mocker, name)
+
+        parent_mock.get_dev.return_value = dev
+        parent_mock.is_block_device.return_value = True
+        parent_mock.dd.side_effect = TestException
+        calls_expected = [mock.call.get_dev(address, port, iqn, lun),
+                          mock.call.discovery(address, port),
+                          mock.call.login_iscsi(address, port, iqn),
+                          mock.call.is_block_device(dev),
+                          mock.call.dd(image_path, dev),
+                          mock.call.logout_iscsi(address, port, iqn),
+                          mock.call.delete_iscsi(address, port, iqn)]
+
+        self.assertRaises(TestException, utils.deploy_disk_image,
+                          address, port, iqn, lun, image_path)
+
+        self.assertEqual(calls_expected, parent_mock.mock_calls)
+
 
 class SwitchPxeConfigTestCase(tests_base.TestCase):
     def setUp(self):
