@@ -399,16 +399,17 @@ def _check_image_size(task):
 def _validate_glance_image(ctx, driver_info):
     """Validate the image in Glance.
 
-    Check if the image exist in Glance and return its
+    Check if the image exist in Glance and if it contains the
     'kernel_id' and 'ramdisk_id' properties.
 
     :raises: InvalidParameterValue.
-    :returns: the image properties
     """
     image_id = driver_info['image_source']
     try:
         glance_service = service.Service(version=1, context=ctx)
-        image_props = glance_service.show(image_id)['properties']
+        image_details = glance_service.show(image_id)
+        disk_format = image_details['disk_format']
+        image_props = image_details['properties']
     except (exception.GlanceConnectionFailed,
             exception.ImageNotAuthorized,
             exception.Invalid):
@@ -419,8 +420,22 @@ def _validate_glance_image(ctx, driver_info):
         raise exception.InvalidParameterValue(_(
             "Image %s not found in Glance") % image_id)
 
-    return image_props
+    if disk_format in ('ari', 'aki', 'iso'):
+        raise exception.InvalidParameterValue(_(
+            "Image %(image)s is of the wrong format: %(disk_format)s")
+            % {'image': image_id, 'disk_format': disk_format})
 
+    if disk_format == 'ami':
+        missing_props = []
+        for prop in ('kernel_id', 'ramdisk_id'):
+            if not image_props.get(prop):
+                missing_props.append(prop)
+
+        if missing_props:
+            props = ', '.join(missing_props)
+            raise exception.InvalidParameterValue(_(
+                "Image %(image)s is missing the following properties: "
+                "%(properties)s") % {'image': image_id, 'properties': props})
 
 class PXEDeploy(base.DeployInterface):
     """PXE Deploy Interface: just a stub until the real driver is ported."""

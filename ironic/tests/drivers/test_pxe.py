@@ -492,7 +492,8 @@ class PXEDriverTestCase(db_base.DbTestCase):
 
     @mock.patch.object(base_image_service.BaseImageService, '_show')
     def test_validate_good(self, mock_glance):
-        mock_glance.return_value = {'properties': {'kernel_id': 'fake-kernel',
+        mock_glance.return_value = {'disk_format': 'ami',
+                                    'properties': {'kernel_id': 'fake-kernel',
                                                    'ramdisk_id': 'fake-initr'}}
         with task_manager.acquire(self.context, self.node.uuid,
                                   shared=True) as task:
@@ -522,7 +523,8 @@ class PXEDriverTestCase(db_base.DbTestCase):
     @mock.patch.object(keystone, 'get_service_url')
     def test_validate_good_api_url_from_config_file(self, mock_ks,
                                                     mock_glance):
-        mock_glance.return_value = {'properties': {'kernel_id': 'fake-kernel',
+        mock_glance.return_value = {'disk_format': 'ami',
+                                    'properties': {'kernel_id': 'fake-kernel',
                                                    'ramdisk_id': 'fake-initr'}}
         # not present in the keystone catalog
         mock_ks.side_effect = exception.CatalogFailure
@@ -535,7 +537,8 @@ class PXEDriverTestCase(db_base.DbTestCase):
     @mock.patch.object(base_image_service.BaseImageService, '_show')
     @mock.patch.object(keystone, 'get_service_url')
     def test_validate_good_api_url_from_keystone(self, mock_ks, mock_glance):
-        mock_glance.return_value = {'properties': {'kernel_id': 'fake-kernel',
+        mock_glance.return_value = {'disk_format': 'ami',
+                                    'properties': {'kernel_id': 'fake-kernel',
                                                    'ramdisk_id': 'fake-initr'}}
         # present in the keystone catalog
         mock_ks.return_value = 'http://127.0.0.1:1234'
@@ -561,8 +564,44 @@ class PXEDriverTestCase(db_base.DbTestCase):
             mock_ks.assert_called_once_with()
 
     @mock.patch.object(base_image_service.BaseImageService, '_show')
+    def test_validate_fail_no_image_kernel_ramdisk_props(self, mock_glance):
+        mock_glance.return_value = {'properties': {}, 'disk_format': 'ami'}
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=True) as task:
+            self.assertRaises(exception.InvalidParameterValue,
+                              task.driver.deploy.validate,
+                              task)
+
+    @mock.patch.object(base_image_service.BaseImageService, '_show')
+    def test_validate_fail_if_iso(self, mock_glance):
+        mock_glance.return_value = {'properties': {}, 'disk_format': 'iso'}
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=True) as task:
+            self.assertRaises(exception.InvalidParameterValue,
+                              task.driver.deploy.validate,
+                              task)
+
+    @mock.patch.object(base_image_service.BaseImageService, '_show')
+    def test_validate_fail_if_ari(self, mock_glance):
+        mock_glance.return_value = {'properties': {}, 'disk_format': 'ari'}
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=True) as task:
+            self.assertRaises(exception.InvalidParameterValue,
+                              task.driver.deploy.validate,
+                              task)
+
+    @mock.patch.object(base_image_service.BaseImageService, '_show')
+    def test_validate_fail_if_aki(self, mock_glance):
+        mock_glance.return_value = {'properties': {}, 'disk_format': 'aki'}
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=True) as task:
+            self.assertRaises(exception.InvalidParameterValue,
+                              task.driver.deploy.validate,
+                              task)
+
+    @mock.patch.object(base_image_service.BaseImageService, '_show')
     def test_validate_allow_no_image_kernel_ramdisk_props(self, mock_glance):
-        mock_glance.return_value = {'properties': {}}
+        mock_glance.return_value = {'properties': {}, 'disk_format': 'qcow2'}
         with task_manager.acquire(self.context, self.node.uuid,
                                   shared=True) as task:
             task.driver.deploy.validate(task)
