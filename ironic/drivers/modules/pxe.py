@@ -693,8 +693,7 @@ class VendorPassthru(base.VendorInterface):
             node.save(task.context)
 
             if not is_ami:
-                #manager_utils.node_set_boot_device(task, 'disk',
-                #                                   persistent=True)
+                # Remove PXE boot configuration in order to boot from disk.
                 tftp.clean_up_pxe_config(task)
                 neutron.update_neutron(task, None)
 
