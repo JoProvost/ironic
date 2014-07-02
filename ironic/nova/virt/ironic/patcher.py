@@ -23,7 +23,6 @@ Helper classes for Ironic HTTP PATCH creation.
 from oslo.config import cfg
 
 from nova.openstack.common import log as logging
-from nova import exception
 
 CONF = cfg.CONF
 CONF.import_opt('default_ephemeral_format', 'nova.virt.driver')
@@ -51,24 +50,29 @@ class GenericDriverFields(object):
     def get_deploy_patch(self, instance, image_meta, flavor):
         return []
 
-    def get_cleanup_patch(self, instance, network_info):
+    def get_cleanup_patch(self, instance, network_info, flavor):
         return []
 
 
 class PXEDriverFields(GenericDriverFields):
 
-    def _get_kernel_ramdisk_id(self, flavor):
-        values = []
+    def _get_kernel_ramdisk_dict(self, flavor):
+        """Get the deploy ramdisk and kernel IDs from the flavor.
+
+        :param flavor: the flavor object.
+        :returns: a dict with the pxe options for the deploy ramdisk and
+            kernel if the IDs were found in the flavor, otherwise an empty
+            dict is returned.
+
+        """
         extra_specs = flavor['extra_specs']
-        for key in ['baremetal:deploy_kernel_id',
-                    'baremetal:deploy_ramdisk_id']:
-            try:
-                values.append(extra_specs[key])
-            except KeyError:
-                msg = (_("'%s' not found in flavor's extra_specs") % key)
-                LOG.error(msg)
-                raise exception.InvalidParameterValue(message=msg)
-        return values
+        deploy_kernel = extra_specs.get('baremetal:deploy_kernel_id')
+        deploy_ramdisk = extra_specs.get('baremetal:deploy_ramdisk_id')
+        deploy_ids = {}
+        if deploy_kernel and deploy_ramdisk:
+            deploy_ids['pxe_deploy_kernel'] = deploy_kernel
+            deploy_ids['pxe_deploy_ramdisk'] = deploy_ramdisk
+        return deploy_ids
 
     def get_deploy_patch(self, instance, image_meta, flavor):
         """Build a patch to add the required fields to deploy a node.
@@ -84,47 +88,47 @@ class PXEDriverFields(GenericDriverFields):
 
         """
         patch = []
-        deploy_kernel, deploy_ramdisk = self._get_kernel_ramdisk_id(flavor)
-        patch.append({'path': '/driver_info/pxe_deploy_kernel', 'op': 'add',
-                      'value': deploy_kernel})
-        patch.append({'path': '/driver_info/pxe_deploy_ramdisk', 'op': 'add',
-                      'value': deploy_ramdisk})
-        patch.append({'path': '/driver_info/pxe_image_source', 'op': 'add',
+        patch.append({'path': '/instance_info/image_source', 'op': 'add',
                       'value': image_meta['id']})
-        patch.append({'path': '/driver_info/pxe_root_gb', 'op': 'add',
+        patch.append({'path': '/instance_info/root_gb', 'op': 'add',
                       'value': str(instance['root_gb'])})
-        patch.append({'path': '/driver_info/pxe_swap_mb', 'op': 'add',
+        patch.append({'path': '/instance_info/swap_mb', 'op': 'add',
                       'value': str(flavor['swap'])})
 
+        # If flavor contains both ramdisk and kernel ids, use them
+        for key, value in self._get_kernel_ramdisk_dict(flavor).items():
+            patch.append({'path': '/driver_info/%s' % key,
+                          'op': 'add', 'value': value})
+
         if instance.get('ephemeral_gb'):
-            patch.append({'path': '/driver_info/pxe_ephemeral_gb',
+            patch.append({'path': '/instance_info/ephemeral_gb',
                           'op': 'add',
                           'value': str(instance['ephemeral_gb'])})
             if CONF.default_ephemeral_format:
-                patch.append({'path': '/driver_info/pxe_ephemeral_format',
+                patch.append({'path': '/instance_info/ephemeral_format',
                               'op': 'add',
                               'value': CONF.default_ephemeral_format})
         return patch
 
-    def get_cleanup_patch(self, instance, network_info):
+    def get_cleanup_patch(self, instance, network_info, flavor):
         """Build a patch to clean up the fields.
 
         Build a json-patch to remove the fields used to deploy a node
-        using the PXE driver.
+        using the PXE driver. Note that the fields added to the Node's
+        instance_info don't need to be removed because they are purged
+        during the Node's tear down.
 
         :param instance: the instance object.
         :param network_info: the instance network information.
+        :param flavor: the flavor object.
         :returns: a json-patch with the fields that needs to be updated.
 
         """
         patch = []
-        driver_info = self.node.driver_info
-        fields = ['pxe_image_source', 'pxe_root_gb', 'pxe_swap_mb',
-                  'pxe_deploy_kernel', 'pxe_deploy_ramdisk',
-                  'pxe_ephemeral_gb', 'pxe_ephemeral_format',
-                  'pxe_preserve_ephemeral']
-        for field in fields:
-            if field in driver_info:
+        # If flavor contains a ramdisk and kernel id remove it from nodes
+        # as part of the tear down process
+        for key in self._get_kernel_ramdisk_dict(flavor):
+            if key in self.node.driver_info:
                 patch.append({'op': 'remove',
-                              'path': '/driver_info/%s' % field})
+                              'path': '/driver_info/%s' % key})
         return patch
