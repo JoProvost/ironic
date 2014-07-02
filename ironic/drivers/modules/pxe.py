@@ -673,14 +673,8 @@ class VendorPassthru(base.VendorInterface):
         LOG.info(_('Continuing deployment for node %(node)s, params '
                    '%(params)s') % {'node': node.uuid, 'params': params})
 
-        is_ami = (node.driver_info.get('pxe_kernel') and
-                  node.driver_info.get('pxe_ramdisk'))
-
         try:
-            if is_ami:
-                deploy_utils.deploy(**params)
-            else:
-                deploy_utils.deploy_disk_image(**params)
+            deploy_utils.deploy(**params)
         except Exception as e:
             LOG.error(_('PXE deploy failed for instance %(instance)s. '
                         'Error: %(error)s') % {'instance': node.instance_uuid,
@@ -691,6 +685,9 @@ class VendorPassthru(base.VendorInterface):
             node.provision_state = states.ACTIVE
             node.target_provision_state = states.NOSTATE
             node.save(task.context)
+
+            is_ami = (node.driver_info.get('pxe_kernel') and
+                      node.driver_info.get('pxe_ramdisk'))
 
             if not is_ami:
                 # Remove PXE boot configuration in order to boot from disk.

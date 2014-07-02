@@ -103,7 +103,7 @@ class DiskPartitioner(object):
         time.sleep(3)
 
 
-_PARTED_PRINT_RE = re.compile(r"^\d+:([\d\.]+)MiB:"
+_PARTED_PRINT_RE = re.compile(r"^(\d+):([\d\.]+)MiB:"
                               "([\d\.]+)MiB:([\d\.]+)MiB:(\w*)::(\w*)")
 
 
@@ -118,7 +118,7 @@ def list_partitions(device):
         'parted', '-s', '-m', device, 'unit', 'MiB', 'print')[0]
     lines = [line for line in output.split('\n') if line.strip()][2:]
     # Example of line: 1:1.00MiB:501MiB:500MiB:ext4::boot
-    fields = ('start', 'end', 'size', 'filesystem', 'flags')
+    fields = ('number', 'start', 'end', 'size', 'filesystem', 'flags')
     result = []
     for line in lines:
         match = _PARTED_PRINT_RE.match(line)
@@ -129,7 +129,23 @@ def list_partitions(device):
                      dict(device=device, line=line))
             continue
         # Cast int fields to ints (some are floats and we round them down)
-        groups = [int(float(x)) if i < 3 else x
+        groups = [int(float(x)) if i < 4 else x
                   for i, x in enumerate(match.groups())]
         result.append(dict(zip(fields, groups)))
     return result
+
+
+_PARTED_PRINT_HEADER_RE = re.compile(r"^.*:.*:.*:.*:.*:(\w*):.*;")
+
+
+def get_partition_table(device):
+    """Get partitions information from given device.
+
+    :param device: The device path.
+    :returns: If a partition table is present.
+    """
+    output = utils.execute(
+        'parted', '-s', '-m', device, 'print')[0]
+    header = [line for line in output.split('\n') if line.strip()][1]
+    match = _PARTED_PRINT_HEADER_RE.match(header)
+    return match.groups()[0]

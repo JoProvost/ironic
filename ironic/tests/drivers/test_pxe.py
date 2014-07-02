@@ -814,7 +814,7 @@ class PXEDriverTestCase(db_base.DbTestCase):
             pass
 
         self.useFixture(fixtures.MonkeyPatch(
-            'ironic.drivers.modules.deploy_utils.deploy_disk_image',
+            'ironic.drivers.modules.deploy_utils.deploy',
             fake_deploy))
 
         with task_manager.acquire(self.context, self.node.uuid) as task:
