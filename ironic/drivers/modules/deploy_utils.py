@@ -322,12 +322,6 @@ def work_on_disk(dev, root_mb, swap_mb, ephemeral_mb, ephemeral_format,
     return root_uuid
 
 
-def get_root_partition(dev):
-    partitions = disk_partitioner.list_partitions(dev)
-    root_part = dev + '-part%d' % partitions[-1]['number']
-    return root_part
-
-
 def work_on_disk_image(dev, image_path, **kwargs):
     """Copy an image to the whole disk.
 
@@ -341,15 +335,6 @@ def work_on_disk_image(dev, image_path, **kwargs):
             _("Parent device '%s' not found") % dev)
 
     dd(image_path, dev)
-
-    root_part = get_root_partition(dev)
-
-    try:
-        root_uuid = block_uuid(root_part)
-    except processutils.ProcessExecutionError:
-        with excutils.save_and_reraise_exception():
-            LOG.error(_("Failed to detect root device UUID."))
-    return root_uuid
 
 
 def deploy(address, port, iqn, lun, image_path, pxe_config_path,

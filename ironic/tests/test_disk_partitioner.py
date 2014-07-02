@@ -79,17 +79,16 @@ BYT;
 2:501MiB:476940MiB:476439MiB:::;
 """
         expected = [
-            {'number': 1, 'start': 1, 'end': 501, 'size': 500,
+            {'start': 1, 'end': 501, 'size': 500,
              'filesystem': 'ext4', 'flags': 'boot'},
-            {'number': 2, 'start': 501, 'end': 476940, 'size': 476439,
+            {'start': 501, 'end': 476940, 'size': 476439,
              'filesystem': '', 'flags': ''},
         ]
         execute_mock.return_value = (output, '')
         result = disk_partitioner.list_partitions('/dev/fake')
         self.assertEqual(expected, result)
         execute_mock.assert_called_once_with(
-            'parted', '-s', '-m', '/dev/fake', 'unit', 'MiB', 'print',
-            run_as_root=True)
+            'parted', '-s', '-m', '/dev/fake', 'unit', 'MiB', 'print')
 
     @mock.patch.object(disk_partitioner.LOG, 'warn')
     def test_incorrect(self, log_mock, execute_mock):
