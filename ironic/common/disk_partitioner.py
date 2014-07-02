@@ -115,7 +115,8 @@ def list_partitions(device):
               start, end, size (in MiB), filesystem, flags
     """
     output = utils.execute(
-        'parted', '-s', '-m', device, 'unit', 'MiB', 'print')[0]
+        'parted', '-s', '-m', device, 'unit', 'MiB', 'print',
+        run_as_root=True)[0]
     lines = [line for line in output.split('\n') if line.strip()][2:]
     # Example of line: 1:1.00MiB:501MiB:500MiB:ext4::boot
     fields = ('number', 'start', 'end', 'size', 'filesystem', 'flags')
