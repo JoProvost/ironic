@@ -132,6 +132,10 @@ def is_block_device(dev):
     return stat.S_ISBLK(s.st_mode)
 
 
+def has_partition_table(dev):
+    return disk_partitioner.get_partition_table(dev) != 'loop'
+
+
 def dd(src, dst):
     """Execute dd from src to dst."""
     utils.execute('dd',
@@ -318,40 +322,19 @@ def work_on_disk(dev, root_mb, swap_mb, ephemeral_mb, ephemeral_format,
     return root_uuid
 
 
-def deploy_disk_image(address, port, iqn, lun, image_path, **kwargs):
-    """Deploy a disk image to a node.
+def work_on_disk_image(dev, image_path, **kwargs):
+    """Copy an image to the whole disk.
 
-    :param address: The iSCSI IP address.
-    :param port: The iSCSI port number.
-    :param iqn: The iSCSI qualified name.
-    :param lun: The iSCSI logical unit number.
+    :param dev: Path for the device to work on.
     :param image_path: Path for the instance's disk image.
+    :param partitions: List of partitions in the image
 
     """
-    dev = get_dev(address, port, iqn, lun)
-    discovery(address, port)
-    login_iscsi(address, port, iqn)
-    try:
-        if not is_block_device(dev):
-            raise exception.InstanceDeployFailure(
-                _("Parent device '%s' not found") % dev)
-        dd(image_path, dev)
-    except processutils.ProcessExecutionError as err:
-        with excutils.save_and_reraise_exception():
-            LOG.error(_("Deploy to address %s failed.") % address)
-            LOG.error(_("Command: %s") % err.cmd)
-            LOG.error(_("StdOut: %r") % err.stdout)
-            LOG.error(_("StdErr: %r") % err.stderr)
-    except exception.InstanceDeployFailure as e:
-        with excutils.save_and_reraise_exception():
-            LOG.error(_("Deploy to address %s failed.") % address)
-            LOG.error(e)
-    finally:
-        logout_iscsi(address, port, iqn)
-        delete_iscsi(address, port, iqn)
-    # Ensure the node started netcat on the port after POST the request.
-    time.sleep(3)
-    notify(address, 10000)
+    if not is_block_device(dev):
+        raise exception.InstanceDeployFailure(
+            _("Parent device '%s' not found") % dev)
+
+    dd(image_path, dev)
 
 
 def deploy(address, port, iqn, lun, image_path, pxe_config_path,
@@ -384,9 +367,12 @@ def deploy(address, port, iqn, lun, image_path, pxe_config_path,
     discovery(address, port)
     login_iscsi(address, port, iqn)
     try:
-        root_uuid = work_on_disk(dev, root_mb, swap_mb, ephemeral_mb,
-                                 ephemeral_format, image_path, node_uuid,
-                                 preserve_ephemeral)
+        if has_partition_table(image_path):
+            root_uuid = work_on_disk_image(dev, image_path)
+        else:
+            root_uuid = work_on_disk(dev, root_mb, swap_mb, ephemeral_mb,
+                                     ephemeral_format, image_path, node_uuid,
+                                     preserve_ephemeral)
     except processutils.ProcessExecutionError as err:
         with excutils.save_and_reraise_exception():
             LOG.error(_("Deploy to address %s failed.") % address)

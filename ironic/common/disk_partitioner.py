@@ -133,3 +133,19 @@ def list_partitions(device):
                   for i, x in enumerate(match.groups())]
         result.append(dict(zip(fields, groups)))
     return result
+
+
+_PARTED_PRINT_HEADER_RE = re.compile(r"^.*:.*:.*:.*:.*:(\w*):.*;")
+
+
+def get_partition_table(device):
+    """Get partitions information from given device.
+
+    :param device: The device path.
+    :returns: If a partition table is present.
+    """
+    output = utils.execute(
+        'parted', '-s', '-m', device, 'print')[0]
+    header = [line for line in output.split('\n') if line.strip()][1]
+    match = _PARTED_PRINT_HEADER_RE.match(header)
+    return match.groups()[0]

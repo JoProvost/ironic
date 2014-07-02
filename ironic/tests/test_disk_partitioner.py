@@ -100,3 +100,33 @@ BYT;
         execute_mock.return_value = (output, '')
         self.assertEqual([], disk_partitioner.list_partitions('/dev/fake'))
         self.assertEqual(1, log_mock.call_count)
+
+
+@mock.patch.object(utils, 'execute')
+class GetPartitionTableTestCase(base.TestCase):
+
+    def test_has_partition_table(self, execute_mock):
+        output = """
+BYT;
+/dev/sda:500107862016B:scsi:512:4096:msdos:ATA HGST HTS725050A7;
+1:1.00MiB:501MiB:500MiB:ext4::boot;
+2:501MiB:476940MiB:476439MiB:::;
+"""
+        execute_mock.return_value = (output, '')
+        result = disk_partitioner.get_partition_table('/dev/fake')
+        self.assertEqual('msdos', result)
+        execute_mock.assert_called_once_with(
+            'parted', '-s', '-m', '/dev/fake', 'print')
+
+    @mock.patch.object(disk_partitioner.LOG, 'warn')
+    def test_no_partition_table(self, log_mock, execute_mock):
+        output = """
+BYT;
+/dev/sda:500107862016B:scsi:512:4096:loop:ATA HGST HTS725050A7;
+1:0.00MiB:476940MiB:476940MiB:ext4::;
+"""
+        execute_mock.return_value = (output, '')
+        result = disk_partitioner.get_partition_table('/dev/fake')
+        self.assertEqual('loop', result)
+        execute_mock.assert_called_once_with(
+            'parted', '-s', '-m', '/dev/fake', 'print')

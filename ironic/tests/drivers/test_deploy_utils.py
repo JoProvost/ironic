@@ -98,7 +98,8 @@ class PhysicalWorkTestCase(tests_base.TestCase):
         name_list = ['get_dev', 'get_image_mb', 'discovery', 'login_iscsi',
                      'logout_iscsi', 'delete_iscsi', 'make_partitions',
                      'is_block_device', 'dd', 'mkswap', 'block_uuid',
-                     'switch_pxe_config', 'notify', 'destroy_disk_metadata']
+                     'switch_pxe_config', 'notify', 'destroy_disk_metadata',
+                     'has_partition_table']
         parent_mock = self._mock_calls(name_list)
         parent_mock.get_dev.return_value = dev
         parent_mock.get_image_mb.return_value = 1
@@ -106,10 +107,12 @@ class PhysicalWorkTestCase(tests_base.TestCase):
         parent_mock.block_uuid.return_value = root_uuid
         parent_mock.make_partitions.return_value = {'root': root_part,
                                                     'swap': swap_part}
+        parent_mock.has_partition_table.return_value = False
         calls_expected = [mock.call.get_dev(address, port, iqn, lun),
                           mock.call.get_image_mb(image_path),
                           mock.call.discovery(address, port),
                           mock.call.login_iscsi(address, port, iqn),
+                          mock.call.has_partition_table(image_path),
                           mock.call.is_block_device(dev),
                           mock.call.destroy_disk_metadata(dev, node_uuid),
                           mock.call.make_partitions(dev, root_mb, swap_mb,
@@ -153,17 +156,20 @@ class PhysicalWorkTestCase(tests_base.TestCase):
         name_list = ['get_dev', 'get_image_mb', 'discovery', 'login_iscsi',
                      'logout_iscsi', 'delete_iscsi', 'make_partitions',
                      'is_block_device', 'dd', 'block_uuid',
-                     'switch_pxe_config', 'notify', 'destroy_disk_metadata']
+                     'switch_pxe_config', 'notify', 'destroy_disk_metadata',
+                     'has_partition_table']
         parent_mock = self._mock_calls(name_list)
         parent_mock.get_dev.return_value = dev
         parent_mock.get_image_mb.return_value = 1
         parent_mock.is_block_device.return_value = True
         parent_mock.block_uuid.return_value = root_uuid
         parent_mock.make_partitions.return_value = {'root': root_part}
+        parent_mock.has_partition_table.return_value = False
         calls_expected = [mock.call.get_dev(address, port, iqn, lun),
                           mock.call.get_image_mb(image_path),
                           mock.call.discovery(address, port),
                           mock.call.login_iscsi(address, port, iqn),
+                          mock.call.has_partition_table(image_path),
                           mock.call.is_block_device(dev),
                           mock.call.destroy_disk_metadata(dev, node_uuid),
                           mock.call.make_partitions(dev, root_mb, swap_mb,
@@ -208,7 +214,7 @@ class PhysicalWorkTestCase(tests_base.TestCase):
                      'logout_iscsi', 'delete_iscsi', 'make_partitions',
                      'is_block_device', 'dd', 'mkswap', 'block_uuid',
                      'switch_pxe_config', 'notify', 'mkfs_ephemeral',
-                     'destroy_disk_metadata']
+                     'destroy_disk_metadata', 'has_partition_table']
         parent_mock = self._mock_calls(name_list)
         parent_mock.get_dev.return_value = dev
         parent_mock.get_image_mb.return_value = 1
@@ -217,10 +223,12 @@ class PhysicalWorkTestCase(tests_base.TestCase):
         parent_mock.make_partitions.return_value = {'swap': swap_part,
                                                    'ephemeral': ephemeral_part,
                                                    'root': root_part}
+        parent_mock.has_partition_table.return_value = False
         calls_expected = [mock.call.get_dev(address, port, iqn, lun),
                           mock.call.get_image_mb(image_path),
                           mock.call.discovery(address, port),
                           mock.call.login_iscsi(address, port, iqn),
+                          mock.call.has_partition_table(image_path),
                           mock.call.is_block_device(dev),
                           mock.call.destroy_disk_metadata(dev, node_uuid),
                           mock.call.make_partitions(dev, root_mb, swap_mb,
@@ -270,7 +278,7 @@ class PhysicalWorkTestCase(tests_base.TestCase):
                      'logout_iscsi', 'delete_iscsi', 'make_partitions',
                      'is_block_device', 'dd', 'mkswap', 'block_uuid',
                      'switch_pxe_config', 'notify', 'mkfs_ephemeral',
-                     'get_dev_block_size']
+                     'get_dev_block_size', 'has_partition_table']
         parent_mock = self._mock_calls(name_list)
         parent_mock.get_dev.return_value = dev
         parent_mock.get_image_mb.return_value = 1
@@ -280,10 +288,12 @@ class PhysicalWorkTestCase(tests_base.TestCase):
                                                    'ephemeral': ephemeral_part,
                                                    'root': root_part}
         parent_mock.block_uuid.return_value = root_uuid
+        parent_mock.has_partition_table.return_value = False
         calls_expected = [mock.call.get_dev(address, port, iqn, lun),
                           mock.call.get_image_mb(image_path),
                           mock.call.discovery(address, port),
                           mock.call.login_iscsi(address, port, iqn),
+                          mock.call.has_partition_table(image_path),
                           mock.call.is_block_device(dev),
                           mock.call.make_partitions(dev, root_mb, swap_mb,
                                                     ephemeral_mb,
@@ -332,7 +342,8 @@ class PhysicalWorkTestCase(tests_base.TestCase):
             pass
 
         name_list = ['get_dev', 'get_image_mb', 'discovery', 'login_iscsi',
-                     'logout_iscsi', 'delete_iscsi', 'work_on_disk']
+                     'logout_iscsi', 'delete_iscsi', 'work_on_disk',
+                     'has_partition_table']
         patch_list = [mock.patch.object(utils, name) for name in name_list]
         mock_list = [patcher.start() for patcher in patch_list]
         for patcher in patch_list:
@@ -345,10 +356,12 @@ class PhysicalWorkTestCase(tests_base.TestCase):
         parent_mock.get_dev.return_value = dev
         parent_mock.get_image_mb.return_value = 1
         parent_mock.work_on_disk.side_effect = TestException
+        parent_mock.has_partition_table.return_value = False
         calls_expected = [mock.call.get_dev(address, port, iqn, lun),
                           mock.call.get_image_mb(image_path),
                           mock.call.discovery(address, port),
                           mock.call.login_iscsi(address, port, iqn),
+                          mock.call.has_partition_table(image_path),
                           mock.call.work_on_disk(dev, root_mb, swap_mb,
                                                  ephemeral_mb,
                                                  ephemeral_format, image_path,
@@ -370,25 +383,46 @@ class PhysicalWorkTestCase(tests_base.TestCase):
         iqn = 'iqn.xyz'
         lun = 1
         image_path = '/tmp/xyz/image'
+        pxe_config_path = '/tmp/abc/pxeconfig'
+        root_mb = 0
+        swap_mb = 0
+        ephemeral_mb = 0
+        ephemeral_format = 'exttest'
         node_uuid = "12345678-1234-1234-1234-1234567890abcxyz"
 
         dev = '/dev/fake'
+        root_part = '/dev/fake-part1'
+        root_uuid = '12345678-1234-1234-12345678-12345678abcdef'
 
-        name_list = ['get_dev', 'discovery', 'login_iscsi', 'logout_iscsi',
-                     'delete_iscsi', 'is_block_device', 'dd', 'notify']
+        name_list = ['get_dev', 'get_image_mb', 'discovery', 'login_iscsi',
+                     'logout_iscsi','delete_iscsi', 'is_block_device', 'dd',
+                     'notify', 'has_partition_table', 'get_root_partition',
+                     'block_uuid', 'switch_pxe_config']
         parent_mock = self._mock_calls(name_list)
         parent_mock.get_dev.return_value = dev
+        parent_mock.get_image_mb.return_value = 1
         parent_mock.is_block_device.return_value = True
+        parent_mock.has_partition_table.return_value = True
+        parent_mock.get_root_partition.return_value = root_part
+        parent_mock.block_uuid.return_value = root_uuid
         calls_expected = [mock.call.get_dev(address, port, iqn, lun),
+                          mock.call.get_image_mb(image_path),
                           mock.call.discovery(address, port),
                           mock.call.login_iscsi(address, port, iqn),
+                          mock.call.has_partition_table(image_path),
                           mock.call.is_block_device(dev),
                           mock.call.dd(image_path, dev),
+                          mock.call.get_root_partition(dev),
+                          mock.call.block_uuid(root_part),
                           mock.call.logout_iscsi(address, port, iqn),
                           mock.call.delete_iscsi(address, port, iqn),
+                          mock.call.switch_pxe_config(pxe_config_path,
+                                                      root_uuid),
                           mock.call.notify(address, 10000)]
 
-        utils.deploy_disk_image(address, port, iqn, lun, image_path)
+        utils.deploy(address, port, iqn, lun, image_path, pxe_config_path,
+                     root_mb, swap_mb, ephemeral_mb, ephemeral_format,
+                     node_uuid)
 
         self.assertEqual(calls_expected, parent_mock.mock_calls)
 
@@ -404,6 +438,12 @@ class PhysicalWorkTestCase(tests_base.TestCase):
         iqn = 'iqn.xyz'
         lun = 1
         image_path = '/tmp/xyz/image'
+        pxe_config_path = '/tmp/abc/pxeconfig'
+        root_mb = 128
+        swap_mb = 64
+        ephemeral_mb = 256
+        ephemeral_format = 'exttest'
+        node_uuid = "12345678-1234-1234-1234-1234567890abcxyz"
 
         dev = '/dev/fake'
 
@@ -411,7 +451,8 @@ class PhysicalWorkTestCase(tests_base.TestCase):
             pass
 
         name_list = ['get_dev', 'discovery', 'login_iscsi', 'logout_iscsi',
-                     'delete_iscsi', 'is_block_device', 'dd']
+                     'delete_iscsi', 'is_block_device', 'dd',
+                     'has_partition_table', 'get_image_mb']
         patch_list = [mock.patch.object(utils, name) for name in name_list]
         mock_list = [patcher.start() for patcher in patch_list]
         for patcher in patch_list:
@@ -422,18 +463,24 @@ class PhysicalWorkTestCase(tests_base.TestCase):
             parent_mock.attach_mock(mocker, name)
 
         parent_mock.get_dev.return_value = dev
+        parent_mock.get_image_mb.return_value = 0
         parent_mock.is_block_device.return_value = True
         parent_mock.dd.side_effect = TestException
+        parent_mock.has_partition_table.return_value = True
         calls_expected = [mock.call.get_dev(address, port, iqn, lun),
+                          mock.call.get_image_mb(image_path),
                           mock.call.discovery(address, port),
                           mock.call.login_iscsi(address, port, iqn),
+                          mock.call.has_partition_table(image_path),
                           mock.call.is_block_device(dev),
                           mock.call.dd(image_path, dev),
                           mock.call.logout_iscsi(address, port, iqn),
                           mock.call.delete_iscsi(address, port, iqn)]
 
-        self.assertRaises(TestException, utils.deploy_disk_image,
-                          address, port, iqn, lun, image_path)
+        self.assertRaises(TestException, utils.deploy,
+                          address, port, iqn, lun, image_path, pxe_config_path,
+                          root_mb, swap_mb, ephemeral_mb, ephemeral_format,
+                          node_uuid)
 
         self.assertEqual(calls_expected, parent_mock.mock_calls)
 
