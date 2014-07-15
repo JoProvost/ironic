@@ -772,11 +772,6 @@ class PXEDriverTestCase(db_base.DbTestCase):
         token_path = self._create_token_file()
         self.node.power_state = states.POWER_ON
         self.node.provision_state = states.DEPLOYWAIT
-        # add internal image info
-        info = self.node.driver_info
-        info['pxe_kernel'] = 'some-kernel-image-uuid'
-        info['pxe_ramdisk'] = 'some-ramdisk-image-uuid'
-        self.node.driver_info = info
         self.node.save()
 
         def fake_deploy(**kwargs):
@@ -803,11 +798,6 @@ class PXEDriverTestCase(db_base.DbTestCase):
         token_path = self._create_token_file()
         self.node.power_state = states.POWER_ON
         self.node.provision_state = states.DEPLOYWAIT
-        # add internal image info
-        info = self.node.driver_info
-        info['pxe_kernel'] = None
-        info['pxe_ramdisk'] = None
-        self.node.driver_info = info
         self.node.save()
 
         def fake_deploy(**kwargs):
@@ -835,11 +825,6 @@ class PXEDriverTestCase(db_base.DbTestCase):
         token_path = self._create_token_file()
         self.node.power_state = states.POWER_ON
         self.node.provision_state = states.DEPLOYWAIT
-        # add internal image info
-        info = self.node.driver_info
-        info['pxe_kernel'] = 'some-kernel-image-uuid'
-        info['pxe_ramdisk'] = 'some-ramdisk-image-uuid'
-        self.node.driver_info = info
         self.node.save()
 
         def fake_deploy(**kwargs):
@@ -866,11 +851,6 @@ class PXEDriverTestCase(db_base.DbTestCase):
         token_path = self._create_token_file()
         self.node.power_state = states.POWER_ON
         self.node.provision_state = states.DEPLOYWAIT
-        # add internal image info
-        info = self.node.driver_info
-        info['pxe_kernel'] = None
-        info['pxe_ramdisk'] = None
-        self.node.driver_info = info
         self.node.save()
 
         def fake_deploy(**kwargs):
