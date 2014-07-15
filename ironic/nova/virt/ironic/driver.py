@@ -20,6 +20,7 @@
 A driver wrapping the Ironic API, such that Nova may provision
 bare metal resources.
 """
+import logging as py_logging
 
 from ironicclient import exc as ironic_exception
 from oslo.config import cfg
@@ -63,6 +64,10 @@ opts = [
                help='Ironic keystone auth token.'),
     cfg.StrOpt('admin_url',
                help='Keystone public API endpoint.'),
+    cfg.StrOpt('client_log_level',
+               help='Log level override for ironicclient. Set this in '
+                    'order to override the global "default_log_levels", '
+                    '"verbose", and "debug" settings.'),
     cfg.StrOpt('pxe_bootfile_name',
                help='This gets passed to Neutron as the bootfile dhcp '
                'parameter when the dhcp_options_enabled is set.',
@@ -168,12 +173,9 @@ class IronicDriver(virt_driver.ComputeDriver):
         super(IronicDriver, self).__init__(virtapi)
 
         self.firewall_driver = firewall.load_driver(default=_FIREWALL_DRIVER)
-        # TODO(deva): sort out extra_specs and nova-scheduler interaction
         extra_specs = {}
         extra_specs["ironic_driver"] = \
             "ironic.nova.virt.ironic.driver.IronicDriver"
-        # cpu_arch set per node.
-        extra_specs['cpu_arch'] = ''
         for pair in CONF.ironic.instance_type_extra_specs:
             keyval = pair.split(':', 1)
             keyval[0] = keyval[0].strip()
@@ -181,6 +183,12 @@ class IronicDriver(virt_driver.ComputeDriver):
             extra_specs[keyval[0]] = keyval[1]
 
         self.extra_specs = extra_specs
+
+        icli_log_level = CONF.ironic.client_log_level
+        if icli_log_level:
+            level = py_logging.getLevelName(icli_log_level)
+            logger = py_logging.getLogger('ironicclient')
+            logger.setLevel(level)
 
     def _node_resources_unavailable(self, node_obj):
         """Determines whether the node's resources should be presented
@@ -196,8 +204,33 @@ class IronicDriver(virt_driver.ComputeDriver):
         memory_mb = int(node.properties.get('memory_mb', 0))
         local_gb = int(node.properties.get('local_gb', 0))
         cpu_arch = str(node.properties.get('cpu_arch', 'NotFound'))
-        nodes_extra_specs = self.extra_specs
+
+        nodes_extra_specs = self.extra_specs.copy()
+
+        # NOTE(deva): In Havana and Icehouse, the flavor was required to link
+        # to an arch-specific deploy kernel and ramdisk pair, and so the flavor
+        # also had to have extra_specs['cpu_arch'], which was matched against
+        # the ironic node.properties['cpu_arch'].
+        # With Juno, the deploy image(s) may be referenced directly by the
+        # node.driver_info, and a flavor no longer needs to contain any of
+        # these three extra specs, though the cpu_arch may still be used
+        # in a heterogeneous environment, if so desired.
         nodes_extra_specs['cpu_arch'] = cpu_arch
+
+        # NOTE(gilliard): To assist with more precise scheduling, if the
+        # node.properties contains a key 'capabilities', we expect the value
+        # to be of the form "k1:v1,k2:v2,etc.." which we add directly as
+        # key/value pairs into the node_extra_specs to be used by the
+        # ComputeCapabilitiesFilter
+        capabilities = node.properties.get('capabilities')
+        if capabilities:
+            for capability in str(capabilities).split(','):
+                parts = capability.split(':')
+                if len(parts) == 2 and parts[0] and parts[1]:
+                    nodes_extra_specs[parts[0]] = parts[1]
+                else:
+                    LOG.warn(_LW("Ignoring malformed capability '%s'. "
+                                 "Format should be 'key:val'."), capability)
 
         vcpus_used = 0
         memory_mb_used = 0
@@ -249,11 +282,13 @@ class IronicDriver(virt_driver.ComputeDriver):
         self.firewall_driver.unfilter_instance(instance, network_info)
 
     def _add_driver_fields(self, node, instance, image_meta, flavor, 
-                                        admin_pass, files, network_info):
+                           admin_pass=None, files=None, network_info=None,
+                           preserve_ephemeral=None):
         icli = client_wrapper.IronicClientWrapper()
         patch = patcher.create(node).get_deploy_patch(instance,
                                                       image_meta,
-                                                      flavor)
+                                                      flavor,
+                                                      preserve_ephemeral)
 
         # Associate the node with an instance
         patch.append({'path': '/instance_uuid', 'op': 'add',
@@ -346,12 +381,6 @@ class IronicDriver(virt_driver.ComputeDriver):
             raise exception.InstanceDeployFailure(msg)
 
         _log_ironic_polling('become ACTIVE', node, instance)
-
-    @classmethod
-    def instance(cls):
-        if not hasattr(cls, '_instance'):
-            cls._instance = cls()
-        return cls._instance
 
     def init_host(self, host):
         """Initialize anything that is necessary for the driver to function.
@@ -607,9 +636,7 @@ class IronicDriver(virt_driver.ComputeDriver):
             # TODO(deva): This exception should be added to
             #             python-ironicclient and matched directly,
             #             rather than via __name__.
-            if getattr(e, '__name__', None) == 'InstanceDeployFailure':
-                pass
-            else:
+            if getattr(e, '__name__', None) != 'InstanceDeployFailure':
                 raise
 
         # using a dict because this is modified in the local method
@@ -914,21 +941,15 @@ class IronicDriver(virt_driver.ComputeDriver):
         instance.task_state = task_states.REBUILD_SPAWNING
         instance.save(expected_task_state=[task_states.REBUILDING])
 
-        node_uuid = instance.get('node')
-
+        node_uuid = instance['node']
         icli = client_wrapper.IronicClientWrapper()
+        node = icli.call("node.get", node_uuid)
+        flavor = flavor_obj.Flavor.get_by_id(context,
+                                             instance['instance_type_id'])
 
-        # Update instance_info for the ephemeral preservation value.
-        patch = []
-        patch.append({'path': '/instance_info/preserve_ephemeral',
-                      'op': 'add', 'value': str(preserve_ephemeral)})
-        try:
-            icli.call('node.update', node_uuid, patch)
-        except ironic_exception.BadRequest:
-            msg = (_("Failed to add deploy parameters on node %(node)s "
-                     "when rebuilding the instance %(instance)s")
-                   % {'node': node_uuid, 'instance': instance['uuid']})
-            raise exception.InstanceDeployFailure(msg)
+        self._add_driver_fields(node, instance, image_meta, flavor,
+                                admin_password, injected_files, network_info,
+                                preserve_ephemeral)
 
         # Trigger the node rebuild/redeploy.
         try:

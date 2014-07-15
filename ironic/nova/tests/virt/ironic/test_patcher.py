@@ -18,10 +18,8 @@ from oslo.config import cfg
 from ironic.nova.virt.ironic import patcher
 from ironic.nova.tests.virt.ironic import utils as ironic_utils
 
-from nova import exception
 from nova import context as nova_context
 from nova import test
-from nova.objects.flavor import Flavor as flavor_obj
 from nova.tests import fake_instance
 
 CONF = cfg.CONF
@@ -71,6 +69,29 @@ class IronicDriverFieldsTestCase(test.NoDBTestCase):
                      'value': 'testfmt', 'op': 'add'}
         self.assertIn(expected1, patch)
         self.assertIn(expected2, patch)
+
+    def test_pxe_get_deploy_patch_preserve_ephemeral(self):
+        node = ironic_utils.get_test_node(driver='pxe_fake')
+        instance = fake_instance.fake_instance_obj(
+                        self.ctx, node=node.uuid, ephemeral_gb=10)
+        for preserve in [True, False]:
+            patch = patcher.create(node).get_deploy_patch(
+                    instance, self.image_meta, self.flavor,
+                    preserve_ephemeral=preserve)
+            expected =  {'path': '/instance_info/preserve_ephemeral',
+                         'value': str(preserve), 'op': 'add', }
+            self.assertIn(expected, patch)
+
+    def test_pxe_get_deploy_patch_no_preserve_ephemeral(self):
+        node = ironic_utils.get_test_node(driver='pxe_fake')
+        instance = fake_instance.fake_instance_obj(
+                        self.ctx, node=node.uuid, ephemeral_gb=10)
+        patch = patcher.create(node).get_deploy_patch(
+                    instance, self.image_meta, self.flavor)
+        for preserve in [True, False]:
+            unexpected =  {'path': '/instance_info/preserve_ephemeral',
+                           'value': str(preserve), 'op': 'add', }
+            self.assertNotIn(unexpected, patch)
 
     def test_pxe_get_deploy_patch_no_flavor_kernel_ramdisk_ids(self):
         self.flavor = ironic_utils.get_test_flavor(extra_specs={})
