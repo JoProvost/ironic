@@ -686,10 +686,10 @@ class VendorPassthru(base.VendorInterface):
             node.target_provision_state = states.NOSTATE
             node.save(task.context)
 
-            is_ami = (node.instance_info.get('kernel') and
-                      node.instance_info.get('ramdisk'))
+            boot_from_pxe = (node.instance_info.get('kernel') and
+                             node.instance_info.get('ramdisk'))
 
-            if not is_ami:
+            if not boot_from_pxe:
                 # Remove PXE boot configuration in order to boot from disk.
                 tftp.clean_up_pxe_config(task)
                 neutron.update_neutron(task, None)
