@@ -686,8 +686,8 @@ class VendorPassthru(base.VendorInterface):
             node.target_provision_state = states.NOSTATE
             node.save(task.context)
 
-            is_ami = (node.instance_info.get('kernel') and
-                      node.instance_info.get('ramdisk'))
+            is_ami = (node.driver_info.get('pxe_kernel') and
+                      node.driver_info.get('pxe_ramdisk'))
 
             if not is_ami:
                 # Remove PXE boot configuration in order to boot from disk.
