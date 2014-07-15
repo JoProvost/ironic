@@ -28,10 +28,12 @@ from ironic.nova.virt.ironic import driver as ironic_driver
 from ironic.nova.virt.ironic import ironic_states
 
 from nova.compute import power_state as nova_states
+from nova.compute import task_states
 from nova import context as nova_context
 from nova import exception
 from nova.objects import flavor as flavor_obj
 from nova.objects import instance as instance_obj
+from nova.openstack.common import jsonutils
 from nova.openstack.common import loopingcall
 from nova.openstack.common import uuidutils
 from nova import test
@@ -62,6 +64,20 @@ class FakeLoopingCall(object):
         self.wait = mock.MagicMock()
         self.start = mock.MagicMock()
         self.start.return_value = self
+
+
+def _get_properties():
+    return {'cpus': 2,
+            'memory_mb': 512,
+            'local_gb': 10,
+            'cpu_arch': 'x86_64'}
+
+
+def _get_stats():
+    return {'cpu_arch': 'x86_64',
+            'ironic_driver':
+                    'ironic.nova.virt.ironic.driver.IronicDriver',
+            'test_spec': 'test_value'}
 
 
 FAKE_CLIENT_WRAPPER = FakeClientWrapper()
@@ -116,70 +132,77 @@ class IronicDriverTestCase(test.NoDBTestCase):
                           icli, instance)
 
     def test__node_resource(self):
-        node_uuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
-        cpus = 2
-        mem = 512
-        disk = 10
-        arch = 'x86_64'
-        properties = {'cpus': cpus, 'memory_mb': mem,
-                      'local_gb': disk, 'cpu_arch': arch}
+        node_uuid = uuidutils.generate_uuid()
+        instance_uuid = uuidutils.generate_uuid()
+        props = _get_properties()
+        stats = _get_stats()
         node = ironic_utils.get_test_node(uuid=node_uuid,
-                                       instance_uuid=uuidutils.generate_uuid(),
-                                       properties=properties)
+                                          instance_uuid=instance_uuid,
+                                          properties=props)
 
         result = self.driver._node_resource(node)
-        self.assertEqual(cpus, result['vcpus'])
-        self.assertEqual(cpus, result['vcpus_used'])
-        self.assertEqual(mem, result['memory_mb'])
-        self.assertEqual(mem, result['memory_mb_used'])
-        self.assertEqual(disk, result['local_gb'])
-        self.assertEqual(disk, result['local_gb_used'])
+        self.assertEqual(props['cpus'], result['vcpus'])
+        self.assertEqual(props['cpus'], result['vcpus_used'])
+        self.assertEqual(props['memory_mb'], result['memory_mb'])
+        self.assertEqual(props['memory_mb'], result['memory_mb_used'])
+        self.assertEqual(props['local_gb'], result['local_gb'])
+        self.assertEqual(props['local_gb'], result['local_gb_used'])
         self.assertEqual(node_uuid, result['hypervisor_hostname'])
-        self.assertEqual('{"cpu_arch": "x86_64", "ironic_driver": "'
-                         'ironic.nova.virt.ironic.driver.IronicDriver", '
-                         '"test_spec": "test_value"}',
-                         result['stats'])
+        self.assertEqual(stats, jsonutils.loads(result['stats']))
+
+    def test__node_resource_exposes_capabilities(self):
+        props = _get_properties()
+        props['capabilities'] = 'test:capability'
+        node = ironic_utils.get_test_node(properties=props)
+        result = self.driver._node_resource(node)
+        stats = jsonutils.loads(result['stats'])
+        self.assertIsNone(stats.get('capabilities'))
+        self.assertEqual('capability', stats.get('test'))
+
+    def test__node_resource_no_capabilities(self):
+        props = _get_properties()
+        props['capabilities'] = None
+        node = ironic_utils.get_test_node(properties=props)
+        result = self.driver._node_resource(node)
+        self.assertIsNone(jsonutils.loads(result['stats']).get('capabilities'))
+
+    def test__node_resource_malformed_capabilities(self):
+        props = _get_properties()
+        props['capabilities'] = 'test:capability,:no_key,no_val:'
+        node = ironic_utils.get_test_node(properties=props)
+        result = self.driver._node_resource(node)
+        stats = jsonutils.loads(result['stats'])
+        self.assertEqual('capability', stats.get('test'))
 
     def test__node_resource_no_instance_uuid(self):
-        node_uuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
-        cpus = 2
-        mem = 512
-        disk = 10
-        arch = 'x86_64'
-        properties = {'cpus': cpus, 'memory_mb': mem,
-                      'local_gb': disk, 'cpu_arch': arch}
+        node_uuid = uuidutils.generate_uuid()
+        props = _get_properties()
+        stats = _get_stats()
         node = ironic_utils.get_test_node(uuid=node_uuid,
                                           instance_uuid=None,
                                           power_state=ironic_states.POWER_OFF,
-                                          properties=properties)
+                                          properties=props)
 
         result = self.driver._node_resource(node)
-        self.assertEqual(cpus, result['vcpus'])
+        self.assertEqual(props['cpus'], result['vcpus'])
         self.assertEqual(0, result['vcpus_used'])
-        self.assertEqual(mem, result['memory_mb'])
+        self.assertEqual(props['memory_mb'], result['memory_mb'])
         self.assertEqual(0, result['memory_mb_used'])
-        self.assertEqual(disk, result['local_gb'])
+        self.assertEqual(props['local_gb'], result['local_gb'])
         self.assertEqual(0, result['local_gb_used'])
         self.assertEqual(node_uuid, result['hypervisor_hostname'])
-        self.assertEqual('{"cpu_arch": "x86_64", "ironic_driver": "'
-                         'ironic.nova.virt.ironic.driver.IronicDriver", '
-                         '"test_spec": "test_value"}',
-                         result['stats'])
+        self.assertEqual(stats, jsonutils.loads(result['stats']))
 
     @mock.patch.object(ironic_driver.IronicDriver,
                        '_node_resources_unavailable')
     def test__node_resource_unavailable_node_res(self, mock_res_unavail):
         mock_res_unavail.return_value = True
-        node_uuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
-        cpus = 2
-        mem = 512
-        disk = 10
-        arch = 'x86_64'
-        properties = {'cpus': cpus, 'memory_mb': mem,
-                      'local_gb': disk, 'cpu_arch': arch}
+        node_uuid = uuidutils.generate_uuid()
+        props = _get_properties()
+        stats = _get_stats()
         node = ironic_utils.get_test_node(uuid=node_uuid,
                                           instance_uuid=None,
-                                          properties=properties)
+                                          properties=props)
 
         result = self.driver._node_resource(node)
         self.assertEqual(0, result['vcpus'])
@@ -189,10 +212,7 @@ class IronicDriverTestCase(test.NoDBTestCase):
         self.assertEqual(0, result['local_gb'])
         self.assertEqual(0, result['local_gb_used'])
         self.assertEqual(node_uuid, result['hypervisor_hostname'])
-        self.assertEqual('{"cpu_arch": "x86_64", "ironic_driver": "'
-                         'ironic.nova.virt.ironic.driver.IronicDriver", '
-                         '"test_spec": "test_value"}',
-                         result['stats'])
+        self.assertEqual(stats, jsonutils.loads(result['stats']))
 
     @mock.patch.object(firewall.NoopFirewallDriver, 'prepare_instance_filter',
                        create=True)
@@ -934,3 +954,96 @@ class IronicDriverTestCase(test.NoDBTestCase):
         fake_group = 'fake-security-group-members'
         self.driver.refresh_instance_security_rules(fake_group)
         mock_risr.assert_called_once_with(fake_group)
+
+    @mock.patch.object(ironic_driver.IronicDriver, '_wait_for_active')
+    @mock.patch.object(loopingcall, 'FixedIntervalLoopingCall')
+    @mock.patch.object(FAKE_CLIENT.node, 'set_provision_state')
+    @mock.patch.object(flavor_obj.Flavor, 'get_by_id')
+    @mock.patch.object(ironic_driver.IronicDriver, '_add_driver_fields')
+    @mock.patch.object(FAKE_CLIENT.node, 'get')
+    @mock.patch.object(instance_obj.Instance, 'save')
+    def _test_rebuild(self, mock_save, mock_get, mock_driver_fields,
+                      mock_fg_bid, mock_set_pstate, mock_looping,
+                      mock_wait_active, preserve=False):
+        node_uuid = uuidutils.generate_uuid()
+        instance_uuid = uuidutils.generate_uuid()
+        node = ironic_utils.get_test_node(uuid=node_uuid,
+                                          instance_uuid=instance_uuid,
+                                          instance_type_id=5)
+        mock_get.return_value = node
+
+        image_meta = ironic_utils.get_test_image_meta()
+        flavor_id = 5
+        flavor = {'id': flavor_id, 'name': 'baremetal'}
+        mock_fg_bid.return_value = flavor
+
+        instance = fake_instance.fake_instance_obj(self.ctx,
+                                                   uuid=instance_uuid,
+                                                   node=node_uuid,
+                                                   instance_type_id=flavor_id)
+
+
+        fake_looping_call = FakeLoopingCall()
+        mock_looping.return_value = fake_looping_call
+
+        self.driver.rebuild(
+            context=self.ctx, instance=instance, image_meta=image_meta,
+            injected_files=None, admin_password=None, bdms=None,
+            detach_block_devices=None, attach_block_devices=None,
+            preserve_ephemeral=preserve)
+
+        mock_save.assert_called_once_with(
+            expected_task_state=[task_states.REBUILDING])
+        mock_driver_fields.assert_called_once_with(node, instance, image_meta,
+                                                   flavor, preserve)
+        mock_set_pstate.assert_called_once_with(node_uuid,
+                                                ironic_states.REBUILD)
+        mock_looping.assert_called_once_with(mock_wait_active,
+                                             FAKE_CLIENT_WRAPPER,
+                                             instance)
+        fake_looping_call.start.assert_called_once_with(
+            interval=CONF.ironic.api_retry_interval)
+        fake_looping_call.wait.assert_called_once()
+
+    def test_rebuild_preserve_ephemeral(self):
+        self._test_rebuild(preserve=True)
+
+    def test_rebuild_no_preserve_ephemeral(self):
+        self._test_rebuild(preserve=False)
+
+    @mock.patch.object(FAKE_CLIENT.node, 'set_provision_state')
+    @mock.patch.object(flavor_obj.Flavor, 'get_by_id')
+    @mock.patch.object(ironic_driver.IronicDriver, '_add_driver_fields')
+    @mock.patch.object(FAKE_CLIENT.node, 'get')
+    @mock.patch.object(instance_obj.Instance, 'save')
+    def test_rebuild_failures(self, mock_save, mock_get, mock_driver_fields,
+                              mock_fg_bid, mock_set_pstate):
+        node_uuid = uuidutils.generate_uuid()
+        instance_uuid = uuidutils.generate_uuid()
+        node = ironic_utils.get_test_node(uuid=node_uuid,
+                                          instance_uuid=instance_uuid,
+                                          instance_type_id=5)
+        mock_get.return_value = node
+
+        image_meta = ironic_utils.get_test_image_meta()
+        flavor_id = 5
+        flavor = {'id': flavor_id, 'name': 'baremetal'}
+        mock_fg_bid.return_value = flavor
+
+        instance = fake_instance.fake_instance_obj(self.ctx,
+                                                   uuid=instance_uuid,
+                                                   node=node_uuid,
+                                                   instance_type_id=flavor_id)
+
+        exceptions = [
+            exception.NovaException(),
+            ironic_exception.BadRequest(),
+            ironic_exception.InternalServerError(),
+        ]
+        for e in exceptions:
+            mock_set_pstate.side_effect = e
+            self.assertRaises(exception.InstanceDeployFailure,
+                self.driver.rebuild,
+                context=self.ctx, instance=instance, image_meta=image_meta,
+                injected_files=None, admin_password=None, bdms=None,
+                detach_block_devices=None, attach_block_devices=None)
