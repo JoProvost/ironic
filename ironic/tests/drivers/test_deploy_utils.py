@@ -391,20 +391,16 @@ class PhysicalWorkTestCase(tests_base.TestCase):
         node_uuid = "12345678-1234-1234-1234-1234567890abcxyz"
 
         dev = '/dev/fake'
-        root_part = '/dev/fake-part1'
-        root_uuid = '12345678-1234-1234-12345678-12345678abcdef'
 
         name_list = ['get_dev', 'get_image_mb', 'discovery', 'login_iscsi',
                      'logout_iscsi','delete_iscsi', 'is_block_device', 'dd',
-                     'notify', 'has_partition_table', 'get_root_partition',
+                     'notify', 'has_partition_table',
                      'block_uuid', 'switch_pxe_config']
         parent_mock = self._mock_calls(name_list)
         parent_mock.get_dev.return_value = dev
         parent_mock.get_image_mb.return_value = 1
         parent_mock.is_block_device.return_value = True
         parent_mock.has_partition_table.return_value = True
-        parent_mock.get_root_partition.return_value = root_part
-        parent_mock.block_uuid.return_value = root_uuid
         calls_expected = [mock.call.get_dev(address, port, iqn, lun),
                           mock.call.get_image_mb(image_path),
                           mock.call.discovery(address, port),
@@ -412,12 +408,9 @@ class PhysicalWorkTestCase(tests_base.TestCase):
                           mock.call.has_partition_table(image_path),
                           mock.call.is_block_device(dev),
                           mock.call.dd(image_path, dev),
-                          mock.call.get_root_partition(dev),
-                          mock.call.block_uuid(root_part),
                           mock.call.logout_iscsi(address, port, iqn),
                           mock.call.delete_iscsi(address, port, iqn),
-                          mock.call.switch_pxe_config(pxe_config_path,
-                                                      root_uuid),
+                          mock.call.switch_pxe_config(pxe_config_path, None),
                           mock.call.notify(address, 10000)]
 
         utils.deploy(address, port, iqn, lun, image_path, pxe_config_path,
