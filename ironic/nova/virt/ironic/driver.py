@@ -341,9 +341,6 @@ class IronicDriver(virt_driver.ComputeDriver):
 
         # Unassociate the node
         patch.append({'op': 'remove', 'path': '/instance_uuid'})
-        # remove configDrive
-        patch.append({'op': 'remove', 'path': '/instance_info/config_drive'})
-
         try:
             icli.call('node.update', node.uuid, patch)
         except ironic_exception.BadRequest:
