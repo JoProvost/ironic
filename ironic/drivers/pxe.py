@@ -41,11 +41,8 @@ class PXEAndIPMIToolDriver(base.BaseDriver):
         self.power = ipmitool.IPMIPower()
         self.console = ipmitool.IPMIShellinaboxConsole()
         self.deploy = pxe.PXEDeploy()
-        self.pxe_vendor = pxe.VendorPassthru()
-        self.ipmi_vendor = ipmitool.VendorPassthru()
-        self.mapping = {'pass_deploy_info': self.pxe_vendor,
-                        'set_boot_device': self.ipmi_vendor}
-        self.vendor = utils.MixinVendorInterface(self.mapping)
+        self.management = ipmitool.IPMIManagement()
+        self.vendor = pxe.VendorPassthru()
 
 
 class PXEAndSSHDriver(base.BaseDriver):
@@ -109,10 +106,10 @@ class PXEAndSeaMicroDriver(base.BaseDriver):
                     reason="Unable to import seamicroclient library")
         self.power = seamicro.Power()
         self.deploy = pxe.PXEDeploy()
+        self.management = seamicro.Management()
         self.seamicro_vendor = seamicro.VendorPassthru()
         self.pxe_vendor = pxe.VendorPassthru()
         self.mapping = {'pass_deploy_info': self.pxe_vendor,
                         'attach_volume': self.seamicro_vendor,
-                        'set_boot_device': self.seamicro_vendor,
                         'set_node_vlan_id': self.seamicro_vendor}
         self.vendor = utils.MixinVendorInterface(self.mapping)
