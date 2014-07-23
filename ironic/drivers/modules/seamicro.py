@@ -21,7 +21,9 @@ Provides vendor passthru methods for SeaMicro specific functionality.
 
 from oslo.config import cfg
 
+from ironic.common import boot_devices
 from ironic.common import exception
+from ironic.common import i18n
 from ironic.common import states
 from ironic.conductor import task_manager
 from ironic.drivers import base
@@ -43,6 +45,8 @@ opts = [
                help='Seconds to wait for power action to be completed')
 ]
 
+_LE = i18n._LE
+
 CONF = cfg.CONF
 opt_group = cfg.OptGroup(name='seamicro',
                          title='Options for the seamicro power driver')
@@ -51,10 +55,25 @@ CONF.register_opts(opts, opt_group)
 
 LOG = logging.getLogger(__name__)
 
-VENDOR_PASSTHRU_METHODS = ['attach_volume', 'set_boot_device',
-                           'set_node_vlan_id']
+VENDOR_PASSTHRU_METHODS = ['attach_volume', 'set_node_vlan_id']
 
-VALID_BOOT_DEVICES = ['pxe', 'disk']
+_BOOT_DEVICES_MAP = {
+    boot_devices.DISK: 'hd0',
+    boot_devices.PXE: 'pxe',
+}
+
+REQUIRED_PROPERTIES = {
+    'seamicro_api_endpoint': _("API endpoint. Required."),
+    'seamicro_password': _("password. Required."),
+    'seamicro_server_id': _("server ID. Required."),
+    'seamicro_username': _("username. Required."),
+}
+OPTIONAL_PROPERTIES = {
+    'seamicro_api_version': _("version of SeaMicro API client; default is 2. "
+                              "Optional.")
+}
+COMMON_PROPERTIES = REQUIRED_PROPERTIES.copy()
+COMMON_PROPERTIES.update(OPTIONAL_PROPERTIES)
 
 
 def _get_client(*args, **kwargs):
@@ -81,23 +100,17 @@ def _parse_driver_info(node):
     """
 
     info = node.driver_info or {}
+    missing_info = [key for key in REQUIRED_PROPERTIES if not info.get(key)]
+    if missing_info:
+        raise exception.InvalidParameterValue(_(
+            "SeaMicro driver requires the following to be set: %s.")
+            % missing_info)
+
     api_endpoint = info.get('seamicro_api_endpoint')
     username = info.get('seamicro_username')
     password = info.get('seamicro_password')
     server_id = info.get('seamicro_server_id')
     api_version = info.get('seamicro_api_version', "2")
-
-    if not api_endpoint:
-        raise exception.InvalidParameterValue(_(
-            "SeaMicro driver requires api_endpoint be set"))
-
-    if not username or not password:
-        raise exception.InvalidParameterValue(_(
-            "SeaMicro driver requires both username and password be set"))
-
-    if not server_id:
-        raise exception.InvalidParameterValue(_(
-            "SeaMicro driver requires server_id be set"))
 
     res = {'username': username,
            'password': password,
@@ -316,6 +329,9 @@ class Power(base.PowerInterface):
     state of servers in a seamicro chassis.
     """
 
+    def get_properties(self):
+        return COMMON_PROPERTIES
+
     def validate(self, task):
         """Check that node 'driver_info' is valid.
 
@@ -382,6 +398,9 @@ class Power(base.PowerInterface):
 
 class VendorPassthru(base.VendorInterface):
     """SeaMicro vendor-specific methods."""
+
+    def get_properties(self):
+        return COMMON_PROPERTIES
 
     def validate(self, task, **kwargs):
         method = kwargs['method']
@@ -461,26 +480,82 @@ class VendorPassthru(base.VendorInterface):
             node.properties = properties
             node.save(task.context)
 
-    def _set_boot_device(self, task, **kwargs):
-        """Set the boot device of the node.
 
-        @kwargs device: Boot device. One of [pxe, disk]
+class Management(base.ManagementInterface):
+
+    def get_properties(self):
+        return COMMON_PROPERTIES
+
+    def validate(self, task):
+        """Check that 'driver_info' contains SeaMicro credentials.
+
+        Validates whether the 'driver_info' property of the supplied
+        task's node contains the required credentials information.
+
+        :param task: a task from TaskManager.
+        :raises: InvalidParameterValue if required seamicro parameters
+            are missing.
+
         """
-        boot_device = kwargs.get('device')
+        _parse_driver_info(task.node)
 
-        if boot_device is None:
-            raise exception.InvalidParameterValue(_("No boot device provided"))
+    def get_supported_boot_devices(self):
+        """Get a list of the supported boot devices.
 
-        if boot_device not in VALID_BOOT_DEVICES:
-            raise exception.InvalidParameterValue(_("Boot device is invalid"))
+        :returns: A list with the supported boot devices defined
+                  in :mod:`ironic.common.boot_devices`.
+
+        """
+        return list(_BOOT_DEVICES_MAP.keys())
+
+    @task_manager.require_exclusive_lock
+    def set_boot_device(self, task, device, persistent=False):
+        """Set the boot device for the task's node.
+
+        Set the boot device to use on next reboot of the node.
+
+        :param task: a task from TaskManager.
+        :param device: the boot device, one of
+                       :mod:`ironic.common.boot_devices`.
+        :param persistent: Boolean value. True if the boot device will
+                           persist to all future boots, False if not.
+                           Default: False. Ignored by this driver.
+        :raises: InvalidParameterValue if an invalid boot device is
+                 specified or if required seamicro parameters are missing.
+        :raises: IronicException on an error from seamicro-client.
+
+        """
+        if device not in self.get_supported_boot_devices():
+            raise exception.InvalidParameterValue(_(
+                "Invalid boot device %s specified.") % device)
 
         seamicro_info = _parse_driver_info(task.node)
         try:
             server = _get_server(seamicro_info)
-            if boot_device == "disk":
-                boot_device = "hd0"
-
+            boot_device = _BOOT_DEVICES_MAP[device]
             server.set_boot_order(boot_device)
         except seamicro_client_exception.ClientException as ex:
-            LOG.error(_("set_boot_device error:  %s"), ex.message)
-            raise exception.VendorPassthruException(message=ex.message)
+            LOG.error(_LE("Seamicro set boot device failed for node "
+                          "%(node)s with the following error: %(error)s"),
+                      {'node': task.node.uuid, 'error': ex.message})
+            raise exception.IronicException(message=ex.message)
+
+    def get_boot_device(self, task):
+        """Get the current boot device for the task's node.
+
+        Returns the current boot device of the node. Be aware that not
+        all drivers support this.
+
+        :param task: a task from TaskManager.
+        :returns: a dictionary containing:
+
+            :boot_device: the boot device, one of
+                :mod:`ironic.common.boot_devices` or None if it is unknown.
+            :persistent: Whether the boot device will persist to all
+                future boots or not, None if it is unknown.
+
+        """
+        # TODO(lucasagomes): The python-seamicroclient library currently
+        # doesn't expose a method to get the boot device, update it once
+        # it's implemented.
+        return {'boot_device': None, 'persistent': None}

@@ -53,6 +53,7 @@ class FakeIPMIToolDriver(base.BaseDriver):
         self.console = ipmitool.IPMIShellinaboxConsole()
         self.deploy = fake.FakeDeploy()
         self.vendor = ipmitool.VendorPassthru()
+        self.management = ipmitool.IPMIManagement()
 
 
 class FakePXEDriver(base.BaseDriver):
@@ -91,4 +92,5 @@ class FakeSeaMicroDriver(base.BaseDriver):
                     reason="Unable to import seamicroclient library")
         self.power = seamicro.Power()
         self.deploy = fake.FakeDeploy()
+        self.management = seamicro.Management()
         self.vendor = seamicro.VendorPassthru()
